@@ -1,3 +1,17 @@
+import {
+  type Guard,
+  type Fields,
+  string,
+  number,
+  index,
+  object,
+  namedFiles,
+  array,
+  strings,
+  float32,
+  binary,
+  optional,
+} from './protocolGuards';
 import { validateSpatialData } from '../visualization/validateSpatialData';
 export type BenchmarkStep =
   | 'alignAll'
@@ -11,27 +25,6 @@ import type { LoadTimeColorUpdate, StationPipelineUpdate } from './stationPipeli
 import type { SpatialData, PointDataPayload } from '../interfaces';
 import { readFileDataMessage } from '../formats/fileMessage';
 
-type Guard<T> = (value: unknown) => value is T;
-const string: Guard<string> = (v): v is string => typeof v === 'string';
-const number: Guard<number> = (v): v is number => typeof v === 'number' && Number.isFinite(v);
-const index: Guard<number> = (v): v is number => number(v) && Number.isInteger(v) && v >= 0;
-const object: Guard<Record<string, unknown>> = (v): v is Record<string, unknown> =>
-  !!v && typeof v === 'object' && !Array.isArray(v);
-const files: Guard<{ name?: string; data?: ArrayBuffer | Uint8Array }[]> = (
-  v
-): v is { name?: string; data?: ArrayBuffer | Uint8Array }[] =>
-  Array.isArray(v) &&
-  v.every(
-    x =>
-      object(x) &&
-      (x.name === undefined || string(x.name)) &&
-      (x.data === undefined || binary(x.data))
-  );
-const array: Guard<unknown[]> = Array.isArray;
-const strings: Guard<string[]> = (v): v is string[] => Array.isArray(v) && v.every(string);
-const float32: Guard<Float32Array> = (v): v is Float32Array => v instanceof Float32Array;
-const binary: Guard<ArrayBuffer | Uint8Array> = (v): v is ArrayBuffer | Uint8Array =>
-  v instanceof ArrayBuffer || v instanceof Uint8Array;
 const spatial: Guard<SpatialData> = (v): v is SpatialData => {
   validateSpatialData(v);
   return true;
@@ -49,10 +42,6 @@ const oneOrMany: Guard<SpatialData | SpatialData[]> = (v): v is SpatialData | Sp
 
 // Each discriminant declares the fields the router needs. Format-specific
 // parsers and command validators validate the content of opaque payloads.
-const optional =
-  <T>(guard: Guard<T>): Guard<T | undefined> =>
-  (value): value is T | undefined =>
-    value === undefined || guard(value);
 const boolean: Guard<boolean> = (v): v is boolean => typeof v === 'boolean';
 const step: Guard<BenchmarkStep> = (v): v is BenchmarkStep =>
   string(v) &&
@@ -82,6 +71,7 @@ const volume: Guard<SpatialData & { metadata: { volumeSessionId: string } }> = (
 ): v is SpatialData & { metadata: { volumeSessionId: string } } =>
   spatial(v) && object(v.metadata) && string(v.metadata.volumeSessionId);
 const schemas = {
+  browserFiles: { files: namedFiles },
   nativeAgentRequest: { id: string, operation: string, arguments: object },
   registrationResult: { id: string, error: optional(string) },
   benchmarkScenario: { step },
@@ -153,7 +143,6 @@ const schemas = {
   poseData: { data: object },
 } as const;
 type Schemas = typeof schemas;
-type Fields<S> = { [K in keyof S]: S[K] extends Guard<infer T> ? T : never };
 type Common = {
   entryId?: number;
   fileIndex?: number;
@@ -197,60 +186,4 @@ export interface EntryRequest {
   fileIndex: number;
   entryId: number;
 }
-const hostSchemas = {
-  nativeAgentReply: { id: string, error: optional(string), result: optional(object) },
-  webviewReady: {},
-  error: { message: string },
-  info: { message: string },
-  perfLog: { line: string },
-  registrationRequest: { id: string },
-  registrationCancel: { id: string },
-  'volume:reextract': { sessionId: string, requestId: number },
-  plyFetchFailed: { docUri: string },
-  modelResourceRequest: { sourceId: string, relative: string, requestId: string },
-  cadDecodeRequest: { requestId: string, bytes: binary, format: string },
-  splatContainerFetchFailed: { docUri: string, fileName: string },
-  stationPipeline: { options: optional(object) },
-  stationPipelineCancel: {},
-  depthFetchFailed: { fileName: optional(string) },
-  addFile: {},
-  removeFile: { fileIndex: index, entryId: optional(index) },
-  requestCameraParams: { requestId: optional(string) },
-  requestCameraParamsWithScale: { requestId: optional(string) },
-  savePlyFile: { content: string, defaultFileName: string },
-  saveScreenshot: { dataBase64: string, defaultFileName: string },
-  saveVideo: { dataBase64: string, defaultFileName: string, extension: string },
-  saveCameraPath: { content: string, defaultFileName: string },
-  saveMeasurementPaths: { content: string, defaultFileName: string },
-  selectColorImage: { fileIndex: index, entryId: optional(index) },
-  loadMtl: { fileIndex: index, entryId: optional(index) },
-  saveDefaultDepthSettings: { settings: object },
-  saveCameraConvention: { convention: string },
-  requestDefaultDepthSettings: {},
-  selectCalibrationFile: { fileIndex: index, entryId: optional(index) },
-  'sequence:requestFile': { path: string, index, requestId: string },
-  'sequence:cancelFile': { requestId: string },
-  addFileFromPath: { path: string },
-  addDroppedFiles: { files },
-  requestDatasetTexture: { sceneName: optional(string) },
-  loadDatasetCalibration: { calibrationPath: string, fileIndex: index },
-  loadDatasetImage: { imagePath: string, fileIndex: index },
-} as const;
-type HostSchemas = typeof hostSchemas;
-export type HostMessage = {
-  [K in keyof HostSchemas]: { type: K } & Fields<HostSchemas[K]> & { requestId?: string | number };
-}[keyof HostSchemas];
-export function readHostMessage(value: unknown): HostMessage | null {
-  if (!object(value) || !string(value.type)) {
-    throw new Error('Expected a host message object with a type');
-  }
-  if (!Object.prototype.hasOwnProperty.call(hostSchemas, value.type)) {
-    return null;
-  }
-  for (const [key, guard] of Object.entries(hostSchemas[value.type as keyof HostSchemas])) {
-    if (!(guard as Guard<unknown>)(value[key])) {
-      throw new Error(`Invalid ${value.type}.${key}`);
-    }
-  }
-  return value as HostMessage;
-}
+export { readHostMessage, type HostMessage } from './hostProtocol';

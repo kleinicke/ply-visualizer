@@ -1,3 +1,4 @@
+import { isWebExtension } from './hosts/ideEnvironment';
 import type { FileEntry, PoseEntryData } from './state/fileEntries';
 import type { FileObject } from './visualization/fileObject';
 import { ViewerLifetime } from './utils/viewerLifetime';
@@ -224,14 +225,14 @@ depthConversionPipeline.startDepthPrefetch(
 
 export class PointCloudVisualizer {
   /**
-   * Whether a VS Code extension host is on the other end of `vscode`.
+   * Whether a Node-based VS Code extension host is on the other end of `vscode`.
    *
    * Features that need a process still holding the opened file — the X3A
    * station pipeline re-reads the archive — key off this rather than sniffing
    * for `acquireVsCodeApi`, which cannot be faked in a test without flipping
    * the whole page into webview mode.
    */
-  readonly runningInVSCode: boolean = isVSCode;
+  readonly runningInVSCode: boolean = isVSCode && !isWebExtension;
   vscode: any = isVSCode
     ? acquireVsCodeApi()
     : {
@@ -708,7 +709,9 @@ export class PointCloudVisualizer {
 
       if (isVSCode) {
         // VSCode extension environment
-        configureRegistrationExtensionHost(message => this.vscode.postMessage(message));
+        if (!isWebExtension) {
+          configureRegistrationExtensionHost(message => this.vscode.postMessage(message));
+        }
         this.setupMessageHandler();
         // Boot phases on the webview's own clock (0 = navigation start).
         perfLog(
@@ -2655,6 +2658,12 @@ export class PointCloudVisualizer {
         npyData: async message => {
           await this.loadWithPerf('npy', message, () =>
             formatDataHandlers.handlePointData(this, message)
+          );
+        },
+        browserFiles: async message => {
+          await browserFileDragDrop.handleBrowserFiles(
+            this,
+            message.files.map(file => new File([file.data as BlobPart], file.name))
           );
         },
         fileData: async message => {

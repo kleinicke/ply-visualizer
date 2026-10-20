@@ -274,7 +274,12 @@ async function startWorker(signal?: AbortSignal): Promise<Worker | null> {
   try {
     const { createRegistrationWorker } = await import('./workerHost');
     signal?.throwIfAborted();
-    worker = createRegistrationWorker();
+    worker = await createRegistrationWorker();
+    if (signal?.aborted) {
+      worker.terminate();
+      worker = null;
+      signal.throwIfAborted();
+    }
   } catch (error) {
     signal?.throwIfAborted();
     console.warn('[registration] worker unavailable, running in page:', error);
@@ -282,6 +287,9 @@ async function startWorker(signal?: AbortSignal): Promise<Worker | null> {
     return null;
   }
 
+  if (!worker) {
+    return null;
+  }
   const starting = worker;
   const handshake = await new Promise<boolean>(resolve => {
     const settle = (value: boolean) => {

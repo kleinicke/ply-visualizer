@@ -1,5 +1,6 @@
+import { isWebExtension } from './hosts/ideEnvironment';
 import type { ViewerLifetime } from './utils/viewerLifetime';
-import { isSceneModel } from './models/modelFormats';
+import { isSceneModel, isModelCompanion } from './models/modelFormats';
 import { loadSceneModel } from './models/loadSceneModel';
 import { setupRemoteFileLoader } from './remoteFileLoader';
 import { CameraParams, DepthConversionResult, SpatialData } from './interfaces';
@@ -48,6 +49,7 @@ export interface BrowserFileDragDropHost {
   vscode: { postMessage(message: any): void };
   spatialFiles: readonly SpatialData[];
   filmManager: FilmManager | null;
+  defaultDepthSettings: CameraParams;
   showImmediateLoading(message: any): void;
   showError(message: string): void;
   removeFileByIndex(fileIndex: number): void;
@@ -356,7 +358,7 @@ export async function handleDropEvent(
   }
 
   if (isVSCode) {
-    const filePaths = extractDroppedFilePaths(event.dataTransfer);
+    const filePaths = extractDroppedFilePaths(event.dataTransfer, isWebExtension);
     if (filePaths.length > 0) {
       host.showImmediateLoading({ fileName: `${filePaths.length} dropped file(s)` });
       filePaths.forEach((filePath, index) => {
@@ -375,7 +377,10 @@ export async function handleDropEvent(
   }
 }
 
-export function extractDroppedFilePaths(dataTransfer: DataTransfer | null): string[] {
+export function extractDroppedFilePaths(
+  dataTransfer: DataTransfer | null,
+  preserveUris = false
+): string[] {
   if (!dataTransfer) {
     return [];
   }
@@ -393,7 +398,9 @@ export function extractDroppedFilePaths(dataTransfer: DataTransfer | null): stri
         continue;
       }
 
-      if (line.startsWith('file://')) {
+      if (preserveUris && /^[a-z][a-z\d+.-]*:\/\//i.test(line)) {
+        paths.push(line);
+      } else if (line.startsWith('file://')) {
         try {
           const url = new URL(line);
           let pathName = decodeURIComponent(url.pathname);
@@ -421,7 +428,7 @@ export async function handleDroppedFiles(
     return;
   }
 
-  if (isVSCode) {
+  if (isVSCode && !isWebExtension) {
     host.showImmediateLoading({ fileName: `${files.length} dropped file(s)` });
     try {
       const droppedFiles = await Promise.all(
@@ -543,10 +550,7 @@ export async function handleBrowserFiles(
       await host.displayFiles([model]);
     }
     if (modelFiles.length) {
-      files = files.filter(
-        file =>
-          !isSceneModel(file.name) && !/\.(bin|png|jpe?g|tga|bmp|webp|gif|mtl)$/i.test(file.name)
-      );
+      files = files.filter(file => !isSceneModel(file.name) && !isModelCompanion(file.name));
       if (!files.length) {
         return;
       }
@@ -668,7 +672,9 @@ export async function handleBrowserFiles(
       console.log(`🖼️ Depth image detected: ${depthFile.name}`);
       try {
         // Ask for params (prompt); then convert via shared helper
-        const params = await host.promptForCameraParameters(depthFile.name);
+        const params = isWebExtension
+          ? { ...host.defaultDepthSettings }
+          : await host.promptForCameraParameters(depthFile.name);
         if (!params) {
           console.log(`⏭️ Skipping ${depthFile.name} - camera parameters cancelled`);
           continue;

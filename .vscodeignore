@@ -104,3 +104,6 @@ test-results/**
 playwright-report/**
 engine/test/**
 ui-tests/**
+
+out/web-test/**
+webpack.web-test.config.js

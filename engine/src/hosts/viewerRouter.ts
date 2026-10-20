@@ -23,6 +23,7 @@ const BACKGROUND_CHANGE_MESSAGES = new Set([
   'stlData',
   'xyzData',
   'fileData',
+  'browserFiles',
   'pcdData',
   'ptsData',
   'kittiBinData',

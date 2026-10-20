@@ -100,6 +100,26 @@ jobs:
           path: engine/playwright-report/
           retention-days: 7
 
+  web-extension:
+    name: VS Code for the Web
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run compile
+      - run: npm exec -- playwright install --with-deps chromium
+      - run: npm run test:web
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: web-extension-capture
+          path: .vscode-test/web/viewer.png
+          include-hidden-files: true
+
   # The tests that need a real VS Code instance. Slowest job, and the only one
   # needing a display, so it is kept separate from the fast gate.
   extension:

@@ -83,6 +83,20 @@ module.exports = [
       ],
     },
   },
+  {
+    name: 'web-extension',
+    target: 'webworker',
+    mode: 'none',
+    entry: './src/web/extension.ts',
+    output: {
+      path: path.resolve(__dirname, 'out/web'),
+      filename: 'extension.js',
+      libraryTarget: 'commonjs2',
+    },
+    externals: { vscode: 'commonjs vscode' },
+    resolve: { extensions: ['.ts', '.js'], mainFields: ['browser', 'module', 'main'] },
+    module: { rules: [{ test: /\.ts$/, exclude: /node_modules/, use: 'ts-loader' }] },
+  },
   // Webview bundle
   {
     target: 'web',

@@ -27,30 +27,29 @@ const workerScope: any = self;
 
 let initPromise: Promise<unknown> | null = null;
 
-function ensureInitialized(): Promise<unknown> {
-  if (!initPromise) {
-    initPromise = initWasm();
-  }
-  return initPromise;
-}
-
-// Announced once the module is live, so the page can tell "this worker works"
-// from "this environment refused to start one" before it hands over any data.
-// A VS Code webview is the second case: its bundle is served from a different
-// origin than the document, so the Worker constructor rejects the script.
-ensureInitialized().then(
-  () => workerScope.postMessage({ ready: true }),
-  (error: unknown) =>
-    workerScope.postMessage({
-      ready: false,
-      error: error instanceof Error ? error.message : String(error),
-    })
-);
-
-workerScope.onmessage = async (event: MessageEvent<RegistrationRequest>) => {
+workerScope.onmessage = async (
+  event: MessageEvent<RegistrationRequest | { type: 'initialize'; module: WebAssembly.Module }>
+) => {
   const request = event.data;
+  if ('type' in request && request.type === 'initialize') {
+    // eslint-disable-next-line @typescript-eslint/naming-convention -- wasm-bindgen API
+    initPromise ??= initWasm({ module_or_path: request.module });
+    try {
+      await initPromise;
+      workerScope.postMessage({ ready: true });
+    } catch (error) {
+      workerScope.postMessage({ ready: false, error: String(error) });
+    }
+    return;
+  }
+  if (!('kind' in request)) {
+    return;
+  }
   try {
-    await ensureInitialized();
+    if (!initPromise) {
+      throw new Error('Registration worker was not initialized');
+    }
+    await initPromise;
     const result = runRegistration(
       wasm,
       request.kind,

@@ -18,3 +18,8 @@ export function isSceneModel(fileName: string): boolean {
   const extension = fileName.split('.').pop()?.toLowerCase();
   return SCENE_MODEL_EXTENSIONS.some(value => value === extension);
 }
+
+/** When selected with a scene model, these files supply its buffers or textures. */
+export function isModelCompanion(fileName: string): boolean {
+  return /\.(bin|png|jpe?g|tga|bmp|webp|gif|mtl)$/i.test(fileName);
+}

@@ -66,6 +66,7 @@
     "CloudCompare"
   ],
   "main": "./out/extension.js",
+  "browser": "./out/web/extension.js",
   "imports": {
     "#registration-wasm-loader": "./out/engine/src/registration/wasmLoader.js"
   },
@@ -239,6 +240,7 @@
       },
       {
         "command": "plyViewer.openDicomFolder",
+        "enablement": "!plyViewer.webHost",
         "title": "Open DICOM Folder as Volume",
         "category": "3D Visualizer"
       },
@@ -289,11 +291,13 @@
       },
       {
         "command": "plyViewer.selectDataset",
+        "enablement": "!plyViewer.webHost",
         "title": "Select Dataset Scene",
         "category": "3D Visualizer"
       },
       {
         "command": "plyViewer.clearDatasetCache",
+        "enablement": "!plyViewer.webHost",
         "title": "Clear Dataset Cache",
         "category": "3D Visualizer"
       }
@@ -2856,6 +2860,7 @@
     ]
   },
   "scripts": {
+    "test:web": "webpack --config webpack.web-test.config.js && node scripts/test-web.cjs",
     "build:python-viewer": "webpack --config engine/webpack.local.cjs --mode=production && webpack --config engine/webpack.mcp-app.cjs --mode=production",
     "test:python-viewer": "python3 -m unittest discover -s packages/python/tests -v",
     "vscode:prepublish": "npm run clean && npm run compile",
@@ -2902,6 +2907,7 @@
     "@typescript-eslint/eslint-plugin": "^8.66.0",
     "@typescript-eslint/parser": "^8.66.0",
     "@vscode/test-electron": "^3.1.0",
+    "@vscode/test-web": "^0.0.81",
     "@vscode/vsce": "^3.9.2",
     "c8": "^12.0.0",
     "copy-webpack-plugin": "^14.0.0",

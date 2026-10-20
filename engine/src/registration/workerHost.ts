@@ -1,16 +1,17 @@
-/**
- * Constructs the registration worker.
- *
- * Split out of `index.ts` for one reason: `new URL(..., import.meta.url)` is
- * the bundler's worker idiom, and leaving it in a module the extension host and
- * the Node test suite import makes `tsc`'s CommonJS output contain ESM syntax,
- * which Node then refuses to load as CJS. `index.ts` reaches this module
- * through a dynamic import that only runs in a browser, so the CommonJS
- * consumers never evaluate it.
- */
+import { spawnWorker, WorkerScript } from '../utils/webviewWorker';
+import { pointcloudWasmModule } from './wasmLoader.browser';
 
-export function createRegistrationWorker(): Worker {
-  // @ts-ignore -- the extension-host tsconfig type-checks shared files as
-  // CommonJS, while this expression is emitted only by the web bundle.
-  return new Worker(new URL('./registrationWorker.ts', import.meta.url), { type: 'module' });
+/** Kept behind a browser-only dynamic import: Node must not evaluate import.meta.url. */
+export async function createRegistrationWorker(): Promise<Worker> {
+  const module = await pointcloudWasmModule();
+  if (!module) {
+    throw new Error('Could not compile registration WebAssembly');
+  }
+  const worker = await spawnWorker(
+    // @ts-ignore -- emitted by webpack; the host also checks this file as CommonJS.
+    new WorkerScript(new URL('./registrationWorker.ts', import.meta.url))
+  );
+  // A blob worker cannot fetch packaged assets through VS Code's resource service.
+  worker.postMessage({ type: 'initialize', module });
+  return worker;
 }

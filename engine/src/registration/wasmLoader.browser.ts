@@ -34,9 +34,9 @@ export function pointcloudWasmModule(): Promise<WebAssembly.Module | null> {
   if (!compiled) {
     compiled = (async () => {
       try {
-        // @ts-ignore -- emitted only by the web bundle, as an asset URL
         const url = new URL(
           '../../../wasm/pointcloud-parser/pkg-web/pointcloud_parser_bg.wasm',
+          // @ts-ignore -- emitted only by the web bundle, as an asset URL
           import.meta.url
         );
         const response = await fetch(url);
