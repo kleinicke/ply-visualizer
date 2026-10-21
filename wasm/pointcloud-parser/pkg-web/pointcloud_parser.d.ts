@@ -552,6 +552,16 @@ export function alloc(len: number): number;
 export function build_volume_voxels(samples: Float32Array, sizes: Uint32Array, ijk_to_world: Float64Array, threshold: number, step: Uint32Array, max_faces: number, clip: Uint32Array, brightness_mode: string, window_center: number, window_width: number, slice_ranges: Float64Array, volume_range: Float64Array, monochrome1: boolean): VoxelMesh;
 
 /**
+ * Project selected 3D points after applying a row-major 4x4 transform.
+ *
+ * `positions` contains interleaved xyz values and `indices` selects the
+ * points to project. The result contains interleaved uv values in index order;
+ * rejected points are returned as NaN pairs. `max_normalized_x/y` provide an
+ * optional pre-distortion calibration-domain guard (use infinity to disable).
+ */
+export function camera_project_points_indexed(camera_model: string, fx: number, fy: number, cx: number, cy: number, coefficients: Float64Array, positions: Float32Array, indices: Uint32Array, transform: Float64Array, max_normalized_x: number, max_normalized_y: number): Float32Array;
+
+/**
  * Smallest eigenvalue of a cloud's normalized normal-covariance, in [0, 1/3].
  *
  * A caller ordering a multi-cloud alignment uses this to tell which clouds can
@@ -880,6 +890,7 @@ export interface InitOutput {
     readonly __wbg_streamparser_free: (a: number, b: number) => void;
     readonly __wbg_voxelmesh_free: (a: number, b: number) => void;
     readonly build_volume_voxels: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number, q: number, r: number, s: number, t: number, u: number) => [number, number, number];
+    readonly camera_project_points_indexed: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number) => [number, number, number, number];
     readonly cloud_position_conditioning: (a: number, b: number, c: number) => number;
     readonly coarse_align: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
     readonly combine_point_indices: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];

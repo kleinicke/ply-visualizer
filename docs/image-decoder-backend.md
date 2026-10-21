@@ -1,9 +1,10 @@
 # Vendored image decoder backend
 
 `crates/image-decoders` is copied from the neighboring `tiff-visualizer`
-repository at commit `ed3c7ed`. The optional JPEG XR dependency in
-`crates/jpegxr` comes from the same commit; its license and in-memory decoding
-patches are documented in `crates/jpegxr/VENDORING.md`.
+repository at commit `16ce17c0287c66d342492cf59867621fbf10a84f` (v1.11.3). The
+optional JPEG XR dependency in `crates/jpegxr` is unchanged since `ed3c7ed`; its
+license and in-memory decoding patches are documented in
+`crates/jpegxr/VENDORING.md`.
 
 The crate owns format parsing, decompression, predictors, decoded samples,
 demosaicing, and decoder statistics. JavaScript bindings and 3D-specific depth
@@ -30,10 +31,23 @@ third-party JPEG XR implementation and the separate point-cloud/camera crates.
 
 To update, copy the decoder and JPEG XR directories from a known upstream
 commit, retain the local patches above, update the dependency lockfile and this
-provenance, and compare decoded samples against the existing Node WASM build.
-Then run `npm run build:wasm` to rebuild web and Node artifacts and record
-`wasm/artifacts.json`, followed by `npm run check:wasm`, Rust tests, and depth
-regressions. The artifact manifest includes both copied source directories. Copy
-the fixtures referenced by the upstream tests into `test-samples` too;
-`npm run test:rust` also runs the shared decoder tests with the enabled image
-features.
+provenance, and compare decoded samples against the previous image WASM build.
+Then run `npm run build:wasm` to rebuild image and point-cloud artifacts and
+record `wasm/artifacts.json`, followed by `npm run check:wasm`, Rust tests, and
+depth regressions. The artifact manifest includes both copied source
+directories. Copy the fixtures referenced by the upstream tests into
+`test-samples` too; `npm run test:rust` also runs the shared decoder tests with
+the enabled image features.
+
+## Runtime builds
+
+The image adapter ships only a browser WASM build in `engine/media/wasm`.
+Desktop scan coloring calls the indexed camera projector exported by the
+point-cloud WASM module, reusing its loaded instance. Both adapters call the
+same Rust implementation in `wasm/camera-models`; the Node host no longer needs
+an image-decoder module just to project camera points.
+
+The point-cloud module keeps Node and browser JavaScript wrappers, but the VSIX
+shares their identical WASM binary. The extension build checks equality before
+deduplicating it. Browser image decoding remains separate from point-cloud
+decoding so each runtime loads only the module it needs.

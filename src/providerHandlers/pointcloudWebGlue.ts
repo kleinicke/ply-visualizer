@@ -30,7 +30,9 @@ function packageDirs(): string[] {
 
 /** The web build's wasm file, or null when this layout does not ship it. */
 export function webWasmPath(): string | null {
-  for (const dir of packageDirs()) {
+  // Node and web glue use the same binary; the VSIX ships it only once.
+  const dirs = [join(__dirname, 'wasm', 'pointcloud-parser'), ...packageDirs()];
+  for (const dir of dirs) {
     const file = join(dir, 'pointcloud_parser_bg.wasm');
     if (existsSync(file)) {
       return file;

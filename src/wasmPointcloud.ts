@@ -1,3 +1,4 @@
+import type { StonexCameraBatchProjector } from '../engine/src/parsers/stonexX3aParser';
 import * as path from 'path';
 import * as fs from 'fs';
 import type { ScalarArray } from '../engine/src/interfaces';
@@ -318,3 +319,26 @@ export async function streamParseFile(
     }
   }
 }
+
+/** Batched camera projection uses the same WASM instance as point-cloud decoding. */
+export const stonexCameraProjector: StonexCameraBatchProjector = request => {
+  const wasm = load();
+  if (!wasm?.camera_project_points_indexed) {
+    return null;
+  }
+  return new Float32Array(
+    wasm.camera_project_points_indexed(
+      'pinhole-opencv',
+      request.fx,
+      request.fy,
+      request.cx,
+      request.cy,
+      new Float64Array(request.coefficients),
+      request.positions,
+      request.indices,
+      new Float64Array(request.transform),
+      request.maxNormalizedX,
+      request.maxNormalizedY
+    )
+  );
+};

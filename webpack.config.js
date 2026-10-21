@@ -1,7 +1,31 @@
 const path = require('path');
+const { readFileSync } = require('node:fs');
 const CopyPlugin = require('copy-webpack-plugin');
 const MiniCssExtractPlugin = require('mini-css-extract-plugin');
 const svelteConfig = require('./engine/svelte.config.js');
+
+// CopyPlugin owns these assets. Both bundles refer to the same packaged files;
+// the webview's automatic public path starts one directory below out/.
+function sharedDecoderAssets(prefix) {
+  return {
+    oneOf: [
+      {
+        test: /pointcloud_parser_bg\.wasm$/,
+        type: 'asset/resource',
+        generator: {
+          emit: false,
+          filename: `${prefix}wasm/pointcloud-parser/pointcloud_parser_bg.wasm`,
+        },
+      },
+      {
+        test: /occt-import-js\.(js|wasm)$/,
+        dependency: 'url',
+        type: 'asset/resource',
+        generator: { emit: false, filename: `${prefix}wasm/cad/[name][ext]` },
+      },
+    ],
+  };
+}
 
 module.exports = [
   // Extension source
@@ -29,7 +53,7 @@ module.exports = [
           {
             from: 'node_modules/occt-import-js/dist',
             to: 'wasm/cad',
-            globOptions: { ignore: ['**/occt-import-js-worker.js'] },
+            globOptions: { ignore: ['**/occt-import-js-worker.js', '**/package.json', '**/*.md'] },
           },
           {
             // Rust/WASM point-cloud parser (nodejs target) — loaded at runtime
@@ -37,6 +61,22 @@ module.exports = [
             // relative to its own dir, so both must sit together in out/.
             from: 'wasm/pointcloud-parser/pkg',
             to: 'wasm/pointcloud-parser',
+            transform(content, absoluteFrom) {
+              if (absoluteFrom.endsWith('.wasm')) {
+                const webBinary = readFileSync(
+                  path.resolve(
+                    __dirname,
+                    'wasm/pointcloud-parser/pkg-web/pointcloud_parser_bg.wasm'
+                  )
+                );
+                if (!content.equals(webBinary)) {
+                  throw new Error(
+                    'Node and web point-cloud WASM differ; cannot share the packaged decoder.'
+                  );
+                }
+              }
+              return content;
+            },
             globOptions: {
               ignore: ['**/package.json', '**/.gitignore', '**/*.d.ts'],
             },
@@ -49,15 +89,7 @@ module.exports = [
             from: 'wasm/pointcloud-parser/pkg-web',
             to: 'wasm/pointcloud-parser-web',
             globOptions: {
-              ignore: ['**/.gitignore', '**/*.d.ts'],
-            },
-          },
-          {
-            // Shared camera-model kernel for extension-host X3A coloring.
-            from: 'wasm/tiff-decoder/pkg-nodejs',
-            to: 'wasm/tiff-camera',
-            globOptions: {
-              ignore: ['**/package.json', '**/.gitignore', '**/*.d.ts'],
+              ignore: ['**/.gitignore', '**/*.d.ts', '**/*.wasm'],
             },
           },
         ],
@@ -71,6 +103,7 @@ module.exports = [
     },
     module: {
       rules: [
+        sharedDecoderAssets(''),
         {
           test: /\.ts$/,
           exclude: [/node_modules/, /src\/test\/ui/],
@@ -151,6 +184,7 @@ module.exports = [
         },
       },
       rules: [
+        sharedDecoderAssets('../'),
         {
           // Matches both `.svelte` components and `.svelte.ts`/`.svelte.js`
           // rune-only state modules (Phase 1's engine/src/state/* stores).

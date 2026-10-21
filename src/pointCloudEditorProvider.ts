@@ -221,6 +221,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       localResourceRoots: [
         vscode.Uri.joinPath(this.context.extensionUri, 'engine', 'media'),
         vscode.Uri.joinPath(this.context.extensionUri, 'out', 'webview'),
+        vscode.Uri.joinPath(this.context.extensionUri, 'out', 'wasm'),
         // The document's directory so the webview can fetch the file bytes
         // directly (transfer-via-fetch), avoiding the postMessage copy for
         // large binary PLYs.

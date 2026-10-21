@@ -20,7 +20,7 @@ import {
   type StonexStationPipelineOptions,
   type StonexStationPipelineTiming,
 } from '../../engine/src/parsers/stonexX3aParser';
-import { stonexCameraProjector } from '../wasmCameraModels';
+import { stonexCameraProjector } from '../wasmPointcloud';
 import {
   colourStationsOnPool,
   colourStonexScansInParallel,

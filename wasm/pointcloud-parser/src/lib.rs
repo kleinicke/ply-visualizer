@@ -12,6 +12,9 @@
 //! New formats that are "rows of whitespace-separated numbers" are easy to add:
 //! parse a column layout, then reuse `parse_rows`.
 
+mod camera;
+pub use camera::camera_project_points_indexed;
+
 mod inspection;
 pub use inspection::{
     combine_point_indices, export_inspection_ply, inspection_fingerprint, point_distances,

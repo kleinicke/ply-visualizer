@@ -7,7 +7,6 @@ const wasmPack = process.env.WASM_PACK || 'wasm-pack';
 for (const [crate, target, outDir] of [
   ['pointcloud-parser', 'nodejs', 'pkg'],
   ['pointcloud-parser', 'web', 'pkg-web'],
-  ['tiff-decoder', 'nodejs', 'pkg-nodejs'],
   ['tiff-decoder', 'no-modules', 'pkg-nomodules'],
 ]) {
   const result = spawnSync(
@@ -32,7 +31,6 @@ for (const file of ['tiff_wasm.js', 'tiff_wasm_bg.wasm']) {
 for (const directory of [
   'wasm/pointcloud-parser/pkg',
   'wasm/pointcloud-parser/pkg-web',
-  'wasm/tiff-decoder/pkg-nodejs',
   'engine/media/wasm',
 ]) {
   for (const name of readdirSync(`${root}/${directory}`)) {

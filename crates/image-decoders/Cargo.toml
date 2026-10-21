@@ -114,7 +114,7 @@ sgi = []
 psd = []
 pfm = []
 netpbm = []
-npy = []
+npy = ["dep:flate2"]
 fits = []
 netcdf = []
 # `jpeg` is not optional here: DICOM's JPEG Baseline transfer syntax is decoded

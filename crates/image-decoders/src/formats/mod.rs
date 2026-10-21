@@ -61,6 +61,8 @@ pub(crate) mod netcdf;
 pub(crate) mod netpbm;
 #[cfg(feature = "npy")]
 pub(crate) mod npy;
+#[cfg(feature = "npy")]
+pub(crate) mod numpy_dataset;
 #[cfg(feature = "pfm")]
 pub(crate) mod pfm;
 #[cfg(feature = "png")]

@@ -2,7 +2,7 @@ import * as assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
 import { StonexX3aParser, type StonexX3aData } from '../../../engine/src/parsers/stonexX3aParser';
-import { stonexCameraProjector } from '../../wasmCameraModels';
+import { stonexCameraProjector } from '../../wasmPointcloud';
 import {
   colourStationsOnPool,
   colourStonexScansInParallel,

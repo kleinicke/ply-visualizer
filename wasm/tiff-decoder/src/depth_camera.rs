@@ -613,78 +613,20 @@ pub fn camera_project_points_indexed(
     max_normalized_x: f64,
     max_normalized_y: f64,
 ) -> Result<Vec<f32>, JsValue> {
-    let model = CameraModel::parse(camera_model).map_err(|error| JsValue::from_str(&error))?;
-    let intrinsics = Intrinsics { fx, fy, cx, cy };
-    camera_models::validate(model, intrinsics, coefficients)
-        .map_err(|error| JsValue::from_str(&error))?;
-    if !positions.len().is_multiple_of(3) {
-        return Err(JsValue::from_str(
-            "positions must contain interleaved xyz values",
-        ));
-    }
-    if transform.len() != 16 || transform.iter().any(|value| !value.is_finite()) {
-        return Err(JsValue::from_str(
-            "transform must contain 16 finite row-major values",
-        ));
-    }
-    if max_normalized_x <= 0.0 || max_normalized_y <= 0.0 {
-        return Err(JsValue::from_str(
-            "normalized projection limits must be positive",
-        ));
-    }
-
-    let opencv = (model == CameraModel::PinholeOpenCv)
-        .then(|| camera_models::OpenCvPinhole::new(coefficients));
-    let mut pixels = Vec::with_capacity(indices.len() * 2);
-    for &index in indices {
-        let offset = index as usize * 3;
-        if offset + 2 >= positions.len() {
-            return Err(JsValue::from_str("point index is outside positions"));
-        }
-        let x = positions[offset] as f64;
-        let y = positions[offset + 1] as f64;
-        let z = positions[offset + 2] as f64;
-        let camera_ray = [
-            transform[0] * x + transform[1] * y + transform[2] * z + transform[3],
-            transform[4] * x + transform[5] * y + transform[6] * z + transform[7],
-            transform[8] * x + transform[9] * y + transform[10] * z + transform[11],
-        ];
-        let normalized_valid = if matches!(
-            model,
-            CameraModel::PinholeIdeal | CameraModel::PinholeOpenCv | CameraModel::E57Pinhole
-        ) {
-            let depth = if model == CameraModel::E57Pinhole {
-                -camera_ray[2]
-            } else {
-                camera_ray[2]
-            };
-            depth > 0.0
-                && (camera_ray[0] / depth).abs() <= max_normalized_x
-                && (camera_ray[1] / depth).abs() <= max_normalized_y
-        } else {
-            true
-        };
-        let projected = if normalized_valid {
-            match &opencv {
-                Some(distortion) => {
-                    camera_models::project_opencv_pinhole(intrinsics, distortion, camera_ray)
-                }
-                None => camera_models::project(model, intrinsics, coefficients, camera_ray),
-            }
-        } else {
-            camera_models::SolveResult {
-                value: [f64::NAN; 2],
-                converged: false,
-                iterations: 0,
-            }
-        };
-        if projected.converged {
-            pixels.extend_from_slice(&[projected.value[0] as f32, projected.value[1] as f32]);
-        } else {
-            pixels.extend_from_slice(&[f32::NAN; 2]);
-        }
-    }
-    Ok(pixels)
+    camera_models::project_points_indexed(
+        camera_model,
+        fx,
+        fy,
+        cx,
+        cy,
+        coefficients,
+        positions,
+        indices,
+        transform,
+        max_normalized_x,
+        max_normalized_y,
+    )
+    .map_err(|error| JsValue::from_str(&error))
 }
 
 /// Unproject one pixel to a unit OpenCV-coordinate ray. Returns

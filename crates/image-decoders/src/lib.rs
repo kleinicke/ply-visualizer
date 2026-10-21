@@ -1521,9 +1521,9 @@ pub fn decode_ppm_display_owned(data: Vec<u8>) -> Result<DecodedArray, DecodeErr
     formats::netpbm::decode_ppm_display_owned_impl(data)
 }
 
-/// Decode a NumPy `.npy` file or a `.npz` archive. Dispatches internally on
-/// the ZIP local-file-header signature in the first 4 bytes, mirroring the
-/// worker's existing `case 'npy':` dispatch.
+/// Compatibility single-raster NumPy API. Preserves the historical selection
+/// and conversion behavior for existing callers. Interactive viewers should
+/// use [`NumpyDataset`] for compressed archives, layouts and plane navigation.
 #[cfg(feature = "npy")]
 pub fn decode_npy_fast(data: &[u8]) -> Result<DecodedArray, DecodeError> {
     decode_npy_impl(data)
@@ -2277,3 +2277,7 @@ mod raw_range_tests {
         assert_eq!(raw_range_u16_le(&words), (2.0, 65535.0));
     }
 }
+
+/// Indexed NumPy arrays with cached member inflation and selected-plane decoding.
+#[cfg(feature = "npy")]
+pub use formats::numpy_dataset::NumpyDataset;

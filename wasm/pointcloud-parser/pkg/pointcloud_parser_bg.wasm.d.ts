@@ -23,6 +23,7 @@ export const __wbg_stonexstationsession_free: (a: number, b: number) => void;
 export const __wbg_streamparser_free: (a: number, b: number) => void;
 export const __wbg_voxelmesh_free: (a: number, b: number) => void;
 export const build_volume_voxels: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number, q: number, r: number, s: number, t: number, u: number) => [number, number, number];
+export const camera_project_points_indexed: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number) => [number, number, number, number];
 export const cloud_position_conditioning: (a: number, b: number, c: number) => number;
 export const coarse_align: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
 export const combine_point_indices: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];

@@ -10,6 +10,9 @@
 //! - `e57-cylindrical`: E57 cylindrical panorama (no coefficients)
 //! - `e57-pinhole`: E57 pinhole axes (+X right, +Y down, -Z visible)
 
+mod indexed;
+pub use indexed::project_points_indexed;
+
 use std::f64::consts::PI;
 
 const EPS: f64 = 1e-12;

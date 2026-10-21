@@ -39,7 +39,7 @@ pub(crate) struct NpyParsed {
 /// `endsWith`/`includes` checks the original TS source used, in the same
 /// order, so the derived numeric domain agrees with which bytes were
 /// actually read.
-fn numeric_info_from_dtype(dtype: &str) -> (u32, u32, String, f64, f64) {
+pub(super) fn numeric_info_from_dtype(dtype: &str) -> (u32, u32, String, f64, f64) {
     if dtype == "<f4" || dtype == "=f4" || dtype == ">f4" {
         return (3, 32, "float32".to_string(), 0.0, 1.0);
     }
@@ -190,7 +190,7 @@ fn parse_int_js(s: &str) -> Option<i64> {
 /// Finds `key` in `header`, skips whitespace, expects `open`, and captures
 /// everything up to the first `close`. Mirrors the regexes
 /// `/'shape':\s*\(([^)]+)\)/` and `/'descr':\s*'([^']+)'/`.
-fn extract_group(header: &str, key: &str, open: char, close: char) -> Option<String> {
+pub(super) fn extract_group(header: &str, key: &str, open: char, close: char) -> Option<String> {
     let idx = header.find(key)?;
     let after = &header[idx + key.len()..];
     let after = after.trim_start();
@@ -239,7 +239,7 @@ fn float16_to_f32(bits: u16) -> f32 {
 /// Dispatch order matters (see module docs / task spec) — it is not exact
 /// dtype matching but the same `endsWith`/`includes` checks the TS source
 /// uses, in the same order.
-fn read_npy_samples(
+pub(super) fn read_npy_samples(
     data: &[u8],
     off: usize,
     elems: usize,
@@ -402,43 +402,7 @@ pub(crate) fn decode_npy_single(
     data: &[u8],
     reuse_native_f32: bool,
 ) -> Result<NpyParsed, DecodeError> {
-    let magic = data
-        .get(0..6)
-        .ok_or_else(|| DecodeError::new("Invalid NPY file"))?;
-    if magic != NPY_MAGIC {
-        return Err(DecodeError::new("Invalid NPY file"));
-    }
-    let major = *data
-        .get(6)
-        .ok_or_else(|| DecodeError::new("Invalid NPY file"))?;
-    let minor = *data
-        .get(7)
-        .ok_or_else(|| DecodeError::new("Invalid NPY file"))?;
-    if major != 1 && major != 2 {
-        return Err(DecodeError::new(format!(
-            "Unsupported NPY version {}.{}",
-            major, minor
-        )));
-    }
-
-    let (header_len, header_start): (usize, usize) = if major == 1 {
-        let b = data
-            .get(8..10)
-            .ok_or_else(|| DecodeError::new("Invalid NPY file"))?;
-        (u16::from_le_bytes([b[0], b[1]]) as usize, 10)
-    } else {
-        let b = data
-            .get(8..12)
-            .ok_or_else(|| DecodeError::new("Invalid NPY file"))?;
-        (u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as usize, 12)
-    };
-
-    let header_bytes = data
-        .get(header_start..header_start + header_len)
-        .ok_or_else(|| DecodeError::new("Invalid NPY file"))?;
-    // latin1: each byte maps 1:1 to the Unicode code point of the same value,
-    // exactly like `TextDecoder('latin1').decode(...)`.
-    let header: String = header_bytes.iter().map(|&b| b as char).collect();
+    let (header, off) = read_header(data, false)?;
 
     let shape_str = extract_group(&header, "'shape':", '(', ')')
         .ok_or_else(|| DecodeError::new("NPY missing shape"))?;
@@ -468,7 +432,6 @@ pub(crate) fn decode_npy_single(
     let channels = channels as usize;
 
     let elems = width.saturating_mul(height).saturating_mul(channels);
-    let off = header_start + header_len;
     let reusable_native_f32 = reuse_native_f32
         && (dtype == "<f4" || dtype == "=f4")
         && cfg!(target_endian = "little")
@@ -637,4 +600,49 @@ fn decode_npz(data: &[u8]) -> Result<NpyParsed, DecodeError> {
 
     let (_key, parsed) = arrays.swap_remove(pick_idx);
     Ok(parsed)
+}
+
+/// Shared header reader for the compatibility raster API and dataset navigation.
+pub(super) fn read_header(data: &[u8], allow_v3: bool) -> Result<(String, usize), DecodeError> {
+    let magic = data
+        .get(0..6)
+        .ok_or_else(|| DecodeError::new("Invalid NPY file"))?;
+    if magic != NPY_MAGIC {
+        return Err(DecodeError::new("Invalid NPY file"));
+    }
+    let major = *data
+        .get(6)
+        .ok_or_else(|| DecodeError::new("Invalid NPY file"))?;
+    let minor = *data
+        .get(7)
+        .ok_or_else(|| DecodeError::new("Invalid NPY file"))?;
+    if major != 1 && major != 2 && !(allow_v3 && major == 3) {
+        return Err(DecodeError::new(format!(
+            "Unsupported NPY version {}.{}",
+            major, minor
+        )));
+    }
+
+    let (header_len, header_start): (usize, usize) = if major == 1 {
+        let b = data
+            .get(8..10)
+            .ok_or_else(|| DecodeError::new("Invalid NPY file"))?;
+        (u16::from_le_bytes([b[0], b[1]]) as usize, 10)
+    } else {
+        let b = data
+            .get(8..12)
+            .ok_or_else(|| DecodeError::new("Invalid NPY file"))?;
+        (u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as usize, 12)
+    };
+
+    let header_end = header_start
+        .checked_add(header_len)
+        .ok_or_else(|| DecodeError::new("Invalid NPY header length"))?;
+    let header_bytes = data
+        .get(header_start..header_end)
+        .ok_or_else(|| DecodeError::new("Invalid NPY file"))?;
+    // latin1: each byte maps 1:1 to the Unicode code point of the same value,
+    // exactly like `TextDecoder('latin1').decode(...)`.
+    let header: String = header_bytes.iter().map(|&b| b as char).collect();
+    Ok((header, header_end))
 }

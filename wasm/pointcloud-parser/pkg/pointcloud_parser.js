@@ -2356,6 +2356,47 @@ function build_volume_voxels(samples, sizes, ijk_to_world, threshold, step, max_
 exports.build_volume_voxels = build_volume_voxels;
 
 /**
+ * Project selected 3D points after applying a row-major 4x4 transform.
+ *
+ * `positions` contains interleaved xyz values and `indices` selects the
+ * points to project. The result contains interleaved uv values in index order;
+ * rejected points are returned as NaN pairs. `max_normalized_x/y` provide an
+ * optional pre-distortion calibration-domain guard (use infinity to disable).
+ * @param {string} camera_model
+ * @param {number} fx
+ * @param {number} fy
+ * @param {number} cx
+ * @param {number} cy
+ * @param {Float64Array} coefficients
+ * @param {Float32Array} positions
+ * @param {Uint32Array} indices
+ * @param {Float64Array} transform
+ * @param {number} max_normalized_x
+ * @param {number} max_normalized_y
+ * @returns {Float32Array}
+ */
+function camera_project_points_indexed(camera_model, fx, fy, cx, cy, coefficients, positions, indices, transform, max_normalized_x, max_normalized_y) {
+    const ptr0 = passStringToWasm0(camera_model, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArrayF64ToWasm0(coefficients, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passArrayF32ToWasm0(positions, wasm.__wbindgen_malloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ptr3 = passArray32ToWasm0(indices, wasm.__wbindgen_malloc);
+    const len3 = WASM_VECTOR_LEN;
+    const ptr4 = passArrayF64ToWasm0(transform, wasm.__wbindgen_malloc);
+    const len4 = WASM_VECTOR_LEN;
+    const ret = wasm.camera_project_points_indexed(ptr0, len0, fx, fy, cx, cy, ptr1, len1, ptr2, len2, ptr3, len3, ptr4, len4, max_normalized_x, max_normalized_y);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v6 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v6;
+}
+exports.camera_project_points_indexed = camera_project_points_indexed;
+
+/**
  * Smallest eigenvalue of a cloud's normalized normal-covariance, in [0, 1/3].
  *
  * A caller ordering a multi-cloud alignment uses this to tell which clouds can

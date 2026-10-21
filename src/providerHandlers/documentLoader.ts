@@ -7,7 +7,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { PlyParser } from '../../engine/src/parsers/plyParser';
 import { StonexX3aParser } from '../../engine/src/parsers/stonexX3aParser';
-import { stonexCameraProjector } from '../wasmCameraModels';
+import { stonexCameraProjector } from '../wasmPointcloud';
 import {
   colourStationsOnPool,
   colourStonexScansInParallel,

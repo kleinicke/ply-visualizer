@@ -92,9 +92,6 @@ fn parse_header(data: &[u8]) -> Result<HdrHeader, DecodeError> {
             "Only FORMAT=32-bit_rle_rgbe HDR files are supported",
         ));
     }
-    if width > 0x7fff {
-        return Err(DecodeError::new("HDR scanline is too wide for RLE"));
-    }
     Ok(HdrHeader {
         width,
         height,
@@ -131,10 +128,12 @@ fn decode_scanline(
     let b1 = data[*offset + 1];
     let b2 = data[*offset + 2];
     let b3 = data[*offset + 3];
-    *offset += 4;
-    if b0 != 2 || b1 != 2 || (b2 & 0x80) != 0 {
-        return Err(DecodeError::new("HDR file is not new-style RLE encoded"));
+    // Scanlines narrower than 8 or wider than 0x7fff pixels cannot be
+    // new-style RLE, and a scanline without its marker is stored flat.
+    if !(8..=0x7fff).contains(&width) || b0 != 2 || b1 != 2 || (b2 & 0x80) != 0 {
+        return decode_old_scanline(data, offset, width, scanline);
     }
+    *offset += 4;
     let scanline_width = ((b2 as usize) << 8) | b3 as usize;
     if scanline_width != width {
         return Err(DecodeError::new("HDR scanline width mismatch"));
@@ -184,6 +183,82 @@ fn decode_scanline(
         }
     }
     Ok(())
+}
+
+/// Decode one flat (uncompressed) or old-style RLE scanline starting at
+/// `*offset` into the same planar layout as `decode_scanline`. Flat pixels are
+/// four bytes R, G, B, E; a pixel of `1, 1, 1, n` repeats the previous pixel
+/// `n << shift` times, the shift growing by 8 for each consecutive run.
+fn decode_old_scanline(
+    data: &[u8],
+    offset: &mut usize,
+    width: usize,
+    scanline: &mut [u8],
+) -> Result<(), DecodeError> {
+    let write = !scanline.is_empty();
+    if width > 0
+        && *offset + width * 4 <= data.len()
+        && !has_old_run(&data[*offset + 4..*offset + width * 4])
+    {
+        // The common case: the whole scanline is flat (a marker on its
+        // first pixel has nothing to repeat and is read as a pixel).
+        if write {
+            let pixels = &data[*offset..*offset + width * 4];
+            let (r, rest) = scanline.split_at_mut(width);
+            let (g, rest) = rest.split_at_mut(width);
+            let (b, e) = rest.split_at_mut(width);
+            for (x, pixel) in pixels.chunks_exact(4).enumerate() {
+                r[x] = pixel[0];
+                g[x] = pixel[1];
+                b[x] = pixel[2];
+                e[x] = pixel[3];
+            }
+        }
+        *offset += width * 4;
+        return Ok(());
+    }
+    let mut x = 0usize;
+    let mut shift = 0u32;
+    while x < width {
+        if *offset + 4 > data.len() {
+            return Err(DecodeError::new("Unexpected EOF in flat HDR scanline"));
+        }
+        let pixel = &data[*offset..*offset + 4];
+        *offset += 4;
+        if x > 0 && pixel[0] == 1 && pixel[1] == 1 && pixel[2] == 1 {
+            if shift > 24 {
+                return Err(DecodeError::new("Bad old-style HDR run"));
+            }
+            let count = (pixel[3] as usize) << shift;
+            if x + count > width {
+                return Err(DecodeError::new("Old-style HDR run overflows the scanline"));
+            }
+            if write {
+                for plane in 0..4 {
+                    let value = scanline[plane * width + x - 1];
+                    scanline[plane * width + x..plane * width + x + count].fill(value);
+                }
+            }
+            x += count;
+            shift += 8;
+        } else {
+            if write {
+                for plane in 0..4 {
+                    scanline[plane * width + x] = pixel[plane];
+                }
+            }
+            x += 1;
+            shift = 0;
+        }
+    }
+    Ok(())
+}
+
+/// Whether any pixel of a flat scanline is an old-style run marker.
+fn has_old_run(pixels: &[u8]) -> bool {
+    pixels
+        .chunks_exact(4)
+        .any(|p| p[0] == 1 && p[1] == 1 && p[2] == 1)
 }
 
 /// One decoded scanline to RGB floats.
@@ -304,4 +379,118 @@ pub(crate) fn decode_hdr_rows(
         convert_row(&scanline, width, &scales, row);
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn header(width: usize, height: usize) -> Vec<u8> {
+        format!("#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y {height} +X {width}\n").into_bytes()
+    }
+
+    fn pixels(width: usize, height: usize) -> Vec<[u8; 4]> {
+        (0..width * height)
+            .map(|i| {
+                [
+                    (i * 7 % 251) as u8,
+                    (i * 13 % 239) as u8,
+                    (i % 200) as u8 + 3,
+                    120 + (i % 16) as u8,
+                ]
+            })
+            .collect()
+    }
+
+    /// New-style RLE with every channel stored as literals of at most 128.
+    fn rle_file(width: usize, height: usize, px: &[[u8; 4]]) -> Vec<u8> {
+        let mut out = header(width, height);
+        for row in px.chunks_exact(width) {
+            out.extend_from_slice(&[2, 2, (width >> 8) as u8, width as u8]);
+            for channel in 0..4 {
+                let values: Vec<u8> = row.iter().map(|p| p[channel]).collect();
+                for chunk in values.chunks(128) {
+                    out.push(chunk.len() as u8);
+                    out.extend_from_slice(chunk);
+                }
+            }
+        }
+        out
+    }
+
+    fn flat_file(width: usize, height: usize, px: &[[u8; 4]]) -> Vec<u8> {
+        let mut out = header(width, height);
+        for p in px {
+            out.extend_from_slice(p);
+        }
+        out
+    }
+
+    #[test]
+    fn flat_scanlines_decode_like_rle_ones() {
+        for (width, height) in [(37, 5), (4, 3)] {
+            let px = pixels(width, height);
+            let flat = decode_hdr_impl(&flat_file(width, height, &px)).unwrap();
+            if width >= 8 {
+                let rle = decode_hdr_impl(&rle_file(width, height, &px)).unwrap();
+                assert_eq!(flat.data_f32, rle.data_f32);
+            }
+            let (r, g, b, e) = (px[1][0], px[1][1], px[1][2], px[1][3]);
+            let scale = 2f32.powi(i32::from(e) - 128) / 255.0;
+            assert_eq!(
+                &flat.data_f32[3..6],
+                &[
+                    f32::from(r) * scale,
+                    f32::from(g) * scale,
+                    f32::from(b) * scale
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn flat_files_plan_fixed_scanline_offsets() {
+        let (width, height) = (37, 5);
+        let file = flat_file(width, height, &pixels(width, height));
+        let plan = hdr_scanline_plan(&file).unwrap();
+        let start = header(width, height).len() as u64;
+        let expected: Vec<u64> = (0..=height as u64)
+            .map(|y| start + y * width as u64 * 4)
+            .collect();
+        assert_eq!(plan.offsets, expected);
+        let blob = &file[plan.offsets[2] as usize..plan.offsets[4] as usize];
+        let rows = decode_hdr_rows(blob, width, 2).unwrap();
+        assert_eq!(
+            rows,
+            decode_hdr_impl(&file).unwrap().data_f32[2 * width * 3..4 * width * 3]
+        );
+    }
+
+    #[test]
+    fn old_style_runs_repeat_the_previous_pixel() {
+        // Width 300: pixel, run of 2, run of 1 << 8 (consecutive: shift 8), then
+        // a final literal pixel; 1 + 2 + 256 + 1 = 260 < 300, so pad literals.
+        let width = 300;
+        let mut file = header(width, 1);
+        file.extend_from_slice(&[10, 20, 30, 130]);
+        file.extend_from_slice(&[1, 1, 1, 2]);
+        file.extend_from_slice(&[1, 1, 1, 1]);
+        for _ in 0..41 {
+            file.extend_from_slice(&[5, 6, 7, 129]);
+        }
+        let result = decode_hdr_impl(&file).unwrap();
+        let first = &result.data_f32[0..3];
+        for x in 0..259 {
+            assert_eq!(&result.data_f32[x * 3..x * 3 + 3], first, "pixel {x}");
+        }
+        let scale = 2f32.powi(1) / 255.0;
+        assert_eq!(
+            &result.data_f32[259 * 3..260 * 3],
+            &[5.0 * scale, 6.0 * scale, 7.0 * scale]
+        );
+        assert_eq!(
+            hdr_scanline_plan(&file).unwrap().offsets[1] as usize,
+            file.len()
+        );
+    }
 }

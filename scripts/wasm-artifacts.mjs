@@ -36,7 +36,6 @@ const sources = [
 const outputs = [
   'wasm/pointcloud-parser/pkg',
   'wasm/pointcloud-parser/pkg-web',
-  'wasm/tiff-decoder/pkg-nodejs',
   'engine/media/wasm',
 ].flatMap(directory =>
   readdirSync(resolve(root, directory))
