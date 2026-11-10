@@ -2,7 +2,7 @@
 
 > **This is a fork of
 > [kleinicke/ply-visualizer](https://github.com/kleinicke/ply-visualizer),
-> produced with [Claude](https://claude.com/claude-code).** It aims to be
+> produced with Claude.** It aims to be
 > primarily a **standalone desktop app** (Linux, Windows, macOS) built on the
 > original's viewer engine, rather than a VS Code extension. The original
 > project's README continues [below](#3d-visualizer).
