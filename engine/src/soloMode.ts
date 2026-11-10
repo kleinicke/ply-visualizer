@@ -1,8 +1,10 @@
+import type * as THREE from 'three';
 import type { FileEntry, FileEntryRegistry } from './state/fileEntries';
 import { soloState } from './state/solo.svelte';
 import { fileGroupsState, saveFileGroups, rememberGroupRegex } from './state/fileGroups.svelte';
 import { compileGroupRegex, groupByRegex, type RegexGroup } from './utils/regexGroups';
 import type { ViewerLifetime } from './utils/viewerLifetime';
+import { stopControlsInertia } from './utils/controlsInertia';
 
 /**
  * Layered visibility: group scope + DAW-style solo, over each entry's own
@@ -32,6 +34,18 @@ export interface SoloHost {
   setFileEntryVisibility(index: number, visible: boolean): void;
   requestRender(): void;
   showStatus(message: string): void;
+  camera: THREE.PerspectiveCamera;
+  controls: { target: THREE.Vector3; update(): void };
+}
+
+/** What is needed to put the camera back exactly where it was. */
+interface GroupView {
+  position: THREE.Vector3;
+  quaternion: THREE.Quaternion;
+  up: THREE.Vector3;
+  target: THREE.Vector3;
+  fov: number;
+  zoom: number;
 }
 
 export function entryDisplayName(entry: FileEntry): string {
@@ -45,6 +59,8 @@ export function entryDisplayName(entry: FileEntry): string {
 
 export class SoloController {
   private reconcileQueued = false;
+  /** Camera per group, for this session; keyed by pattern and group key. */
+  private readonly groupViews = new Map<string, GroupView>();
 
   constructor(private readonly host: SoloHost) {}
 
@@ -158,11 +174,55 @@ export class SoloController {
       soloIds = soloState.ids;
       primaryId = soloState.primaryId;
     }
+    // Each group keeps its own camera: remember this one, restore the next
+    // one's if it has been visited before (otherwise keep the current view).
+    if (previous && previous !== next) {
+      // Saved as it is on screen now; a glide still in progress is dropped
+      // rather than carried into the next group.
+      stopControlsInertia(this.host.controls);
+      this.groupViews.set(this.viewKey(previous.key), this.captureView());
+    }
     fileGroupsState.active = next.key;
     saveFileGroups();
+    const view = previous !== next ? this.groupViews.get(this.viewKey(next.key)) : undefined;
+    if (view) {
+      this.applyView(view);
+    }
     soloState.ids = soloIds;
     soloState.primaryId = primaryId;
     this.refreshScope();
+  }
+
+  private viewKey(key: string): string {
+    return `${fileGroupsState.regex}\u0000${key}`;
+  }
+
+  private captureView(): GroupView {
+    const { camera, controls } = this.host;
+    return {
+      position: camera.position.clone(),
+      quaternion: camera.quaternion.clone(),
+      up: camera.up.clone(),
+      target: controls.target.clone(),
+      fov: camera.fov,
+      zoom: camera.zoom,
+    };
+  }
+
+  private applyView(view: GroupView): void {
+    const { camera, controls } = this.host;
+    camera.position.copy(view.position);
+    camera.up.copy(view.up);
+    camera.quaternion.copy(view.quaternion);
+    controls.target.copy(view.target);
+    stopControlsInertia(controls);
+    if (camera.fov !== view.fov || camera.zoom !== view.zoom) {
+      camera.fov = view.fov;
+      camera.zoom = view.zoom;
+      camera.updateProjectionMatrix();
+    }
+    controls.update();
+    this.host.requestRender();
   }
 
   stepGroup(delta: number): void {
