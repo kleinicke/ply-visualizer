@@ -1,11 +1,11 @@
 {
   "name": "ply-visualizer-electron",
   "productName": "PLY Visualizer",
-  "version": "1.9.0",
-  "description": "Standalone desktop build of the 3D point cloud and mesh visualizer, with DAW-style solo",
+  "version": "0.1.0",
+  "description": "Standalone desktop app for point clouds and meshes (fork of kleinicke/ply-visualizer) with DAW-style solo and groups",
   "license": "MIT",
-  "author": "kleinicke (upstream ply-visualizer), desktop shell contributors",
-  "homepage": "https://github.com/kleinicke/ply-visualizer",
+  "author": "deivse (desktop fork of kleinicke/ply-visualizer)",
+  "homepage": "https://github.com/deivse/ply-visualizer",
   "main": "src/main.js",
   "desktopName": "ply-visualizer.desktop",
   "private": true,
@@ -13,9 +13,9 @@
     "build:web": "node scripts/build-web.mjs",
     "start": "electron .",
     "dev": "node scripts/build-web.mjs && electron .",
-    "dist:linux": "node scripts/build-web.mjs && electron-builder --linux",
-    "dist:win": "node scripts/build-web.mjs && electron-builder --win",
-    "dist": "node scripts/build-web.mjs && electron-builder --linux --win"
+    "dist:linux": "node scripts/build-web.mjs && electron-builder --linux --publish never",
+    "dist:win": "node scripts/build-web.mjs && electron-builder --win --publish never",
+    "dist:mac": "node scripts/build-web.mjs && electron-builder --mac --x64 --arm64 --publish never"
   },
   "build": {
     "appId": "de.f-kleinicke.ply-visualizer.desktop",
@@ -30,7 +30,8 @@
       "src/**",
       "web/**",
       "build/icon.png",
-      "package.json"
+      "package.json",
+      "!**/node_modules/**"
     ],
     "asar": true,
     "fileAssociations": [
@@ -55,8 +56,18 @@
     ],
     "linux": {
       "target": [
-        "AppImage",
-        "tar.gz"
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "tar.gz",
+          "arch": [
+            "x64"
+          ]
+        }
       ],
       "category": "Graphics",
       "syncDesktopName": true,
@@ -72,15 +83,39 @@
     },
     "win": {
       "target": [
-        "nsis",
-        "zip"
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        }
       ],
-      "icon": "build/icon.png"
+      "icon": "build/icon.png",
+      "artifactName": "ply-visualizer-${version}-windows-${arch}.${ext}"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "perMachine": false
+      "perMachine": false,
+      "artifactName": "ply-visualizer-${version}-windows-${arch}-setup.${ext}"
+    },
+    "publish": null,
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.graphics-design",
+      "icon": "build/icon.png",
+      "identity": null,
+      "hardenedRuntime": false,
+      "artifactName": "ply-visualizer-${version}-macos-${arch}.${ext}"
     }
   },
   "devDependencies": {

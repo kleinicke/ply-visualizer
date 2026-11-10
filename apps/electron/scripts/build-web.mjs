@@ -1,6 +1,7 @@
 // Builds the shared engine's standalone page and adapts it for the desktop
 // host: no analytics, no website-only links/metadata, plus the desktop glue.
 import { execFileSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,7 +13,10 @@ const dist = path.join(engineDir, 'dist');
 const out = path.join(appDir, 'web');
 
 if (!process.argv.includes('--skip-engine')) {
-  execFileSync('npx', ['webpack', '--mode=production'], { cwd: engineDir, stdio: 'inherit' });
+  // Run webpack's CLI through this Node binary: no shell, no `npx` (which is a
+  // .cmd script on Windows and cannot be spawned directly there).
+  const webpackCli = createRequire(path.join(engineDir, 'package.json')).resolve('webpack-cli/bin/cli.js');
+  execFileSync(process.execPath, [webpackCli, '--mode=production'], { cwd: engineDir, stdio: 'inherit' });
 }
 
 fs.rmSync(out, { recursive: true, force: true });

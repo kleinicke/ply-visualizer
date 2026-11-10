@@ -1,0 +1,126 @@
+name: Desktop release
+
+# Builds the Electron desktop app (apps/electron) for Linux, Windows and macOS
+# and publishes a GitHub release with the installers.
+#
+#   git tag desktop-v0.1.0 && git push fork desktop-v0.1.0
+#
+# The tag must match apps/electron/package.json's version. Running the
+# workflow by hand builds the packages as workflow artifacts without a release.
+
+on:
+  push:
+    tags: ['desktop-v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux
+            os: ubuntu-latest
+            args: --linux
+          - name: windows
+            os: windows-latest
+            args: --win
+          - name: macos
+            os: macos-latest
+            args: --mac --x64 --arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            apps/electron/package-lock.json
+
+      - name: Check the tag matches the app version
+        if: startsWith(github.ref, 'refs/tags/desktop-v')
+        shell: bash
+        run: |
+          version=$(node -p "require('./apps/electron/package.json').version")
+          if [ "desktop-v$version" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match apps/electron version $version"
+            exit 1
+          fi
+
+      - name: Install engine dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Install desktop dependencies
+        working-directory: apps/electron
+        run: npm ci --no-audit --no-fund
+
+      - name: Build the viewer page
+        working-directory: apps/electron
+        run: node scripts/build-web.mjs
+
+      - name: Package
+        working-directory: apps/electron
+        env:
+          # Unsigned builds: no code-signing identity on the runners.
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npx electron-builder ${{ matrix.args }} --publish never
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.name }}
+          if-no-files-found: error
+          path: |
+            apps/electron/release/*.AppImage
+            apps/electron/release/*.tar.gz
+            apps/electron/release/*.exe
+            apps/electron/release/*.zip
+            apps/electron/release/*.dmg
+
+  release:
+    name: Publish release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/desktop-v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: PLY Visualizer Desktop ${{ github.ref_name }}
+          files: dist/*
+          body: |
+            Standalone desktop build of the 3D point cloud and mesh viewer from
+            [kleinicke/ply-visualizer](https://github.com/kleinicke/ply-visualizer),
+            with DAW-style solo, a solo panel, regex groups and folder opening.
+            See the [README](https://github.com/${{ github.repository }}/tree/${{ github.ref_name }}#what-this-fork-adds).
+
+            | Platform | Download |
+            | --- | --- |
+            | Linux (x64) | `.AppImage` (run directly) or `.tar.gz` |
+            | Windows (x64) | `-setup.exe` installer or portable `.zip` |
+            | macOS (Apple Silicon / Intel) | `.dmg` (`arm64` / `x64`) or `.zip` |
+
+            The builds are **not code-signed**:
+            - **macOS** blocks unsigned apps the first time. After copying the app to
+              Applications, run `xattr -cr "/Applications/PLY Visualizer.app"`, or
+              right-click it → Open.
+            - **Windows** SmartScreen may warn: choose *More info → Run anyway*.
+            - **Linux**: `chmod +x` the AppImage, then run it.
+
+            `SHA256SUMS.txt` lists the checksums of all files.

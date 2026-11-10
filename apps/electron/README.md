@@ -12,8 +12,23 @@ cd apps/electron
 npm install                 # electron + electron-builder
 npm run dev                 # build engine page, launch app
 npm run dist:linux          # release/*.AppImage and .tar.gz
-npm run dist:win            # NSIS installer + zip (exe icon needs wine on Linux)
+npm run dist:win            # NSIS installer + zip (on Windows)
+npm run dist:mac            # dmg + zip, x64 and arm64 (on macOS)
 ```
+
+### Releases
+
+`.github/workflows/desktop-release.yml` builds all three platforms on GitHub's
+runners and publishes a release with the installers and `SHA256SUMS.txt`. Bump
+`version` in `package.json`, then push a matching tag:
+
+```sh
+git tag desktop-v0.1.0
+git push fork desktop-v0.1.0
+```
+
+Builds are unsigned (macOS Gatekeeper and Windows SmartScreen warn on first
+launch; the release notes explain how to proceed).
 
 ## Opening files
 
