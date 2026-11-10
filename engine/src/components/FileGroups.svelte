@@ -2,7 +2,7 @@
   import type { FileListHost } from './fileListTypes';
   import { filesState } from '../state/files.svelte';
   import { fileGroupsState } from '../state/fileGroups.svelte';
-  import { soloState } from '../state/solo.svelte';
+  import { soloState, soloLayout } from '../state/solo.svelte';
   import { compileGroupRegex, groupRegexPresets, NO_MATCH } from '../utils/regexGroups';
 
   let { host }: { host: FileListHost } = $props();
@@ -142,11 +142,12 @@
 
 {#if hasFiles}
   <div class="file-list-toolbar">
-    <button class="flt-btn" title="Collapse all objects" onclick={() => setAllCollapsed(true)}
-      >▶ Collapse all</button
-    >
-    <button class="flt-btn" title="Expand all objects" onclick={() => setAllCollapsed(false)}
-      >▼ Expand all</button
+    <button
+      class="flt-btn"
+      class:on={!soloLayout.hidden}
+      aria-pressed={!soloLayout.hidden}
+      title="Show or hide the floating solo panel"
+      onclick={() => host.solo.togglePanel()}>Solo panel</button
     >
     <span class="flt-spacer"></span>
     <button
@@ -295,19 +296,36 @@
       </div>
     {/if}
   {/if}
+
+  <div class="file-list-collapse-row">
+    <button class="flt-btn" title="Collapse all objects" onclick={() => setAllCollapsed(true)}
+      >▶ Collapse all</button
+    >
+    <button class="flt-btn" title="Expand all objects" onclick={() => setAllCollapsed(false)}
+      >▼ Expand all</button
+    >
+  </div>
 {/if}
 
 <style>
   .file-list-toolbar {
     display: flex;
     align-items: center;
-    gap: 3px;
+    gap: 4px;
     flex-wrap: wrap;
-    margin-bottom: 6px;
+    padding: 2px 0;
+    margin-bottom: 8px;
     position: relative;
   }
   .flt-spacer {
     flex: 1;
+  }
+  .file-list-collapse-row {
+    display: flex;
+    gap: 6px;
+    padding: 6px 0 8px;
+    margin-bottom: 4px;
+    border-bottom: 1px solid var(--vscode-sideBar-border, rgba(127, 127, 127, 0.3));
   }
   .flt-btn {
     font: inherit;

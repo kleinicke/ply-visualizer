@@ -12,6 +12,10 @@ contextBridge.exposeInMainWorld('plyDesktop', {
   onShowShortcuts: callback => {
     ipcRenderer.on('show-shortcuts', () => callback());
   },
+  onToggleSoloPanel: callback => {
+    ipcRenderer.on('toggle-solo-panel', () => callback());
+  },
+  reportSoloPanel: visible => ipcRenderer.send('solo-panel-visibility', visible === true),
 });
 
 // Dropping a folder (or a mix with folders) onto the window opens it like

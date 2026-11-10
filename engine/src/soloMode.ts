@@ -1,6 +1,6 @@
 import type * as THREE from 'three';
 import type { FileEntry, FileEntryRegistry } from './state/fileEntries';
-import { soloState } from './state/solo.svelte';
+import { soloState, soloLayout, saveSoloLayout } from './state/solo.svelte';
 import { fileGroupsState, saveFileGroups, rememberGroupRegex } from './state/fileGroups.svelte';
 import { compileGroupRegex, groupByRegex, type RegexGroup } from './utils/regexGroups';
 import type { ViewerLifetime } from './utils/viewerLifetime';
@@ -256,6 +256,29 @@ export class SoloController {
       soloState.scopeIds = null;
       this.settle();
     }
+  }
+
+  // ---- solo panel ----------------------------------------------------------
+
+  get panelHidden(): boolean {
+    return soloLayout.hidden;
+  }
+
+  /**
+   * Shows or hides the floating solo panel (solo keys keep working while it
+   * is hidden). Announced as a `solo-panel-visibility` window event so a host
+   * (the desktop View menu) can mirror it.
+   */
+  setPanelHidden(hidden: boolean): void {
+    soloLayout.hidden = hidden;
+    saveSoloLayout();
+    window.dispatchEvent(
+      new CustomEvent('solo-panel-visibility', { detail: { visible: !hidden } })
+    );
+  }
+
+  togglePanel(): void {
+    this.setPanelHidden(!soloLayout.hidden);
   }
 
   // ---- own visibility ------------------------------------------------------

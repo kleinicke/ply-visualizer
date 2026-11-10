@@ -322,6 +322,17 @@ function clearScene(win) {
   win.webContents.reload();
 }
 
+/** The focused window's solo panel visibility, as last reported by its page. */
+function soloPanelChecked() {
+  const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+  return win ? windowState.get(win)?.soloPanelVisible !== false : true;
+}
+
+function syncSoloPanelMenuItem() {
+  const item = Menu.getApplicationMenu()?.getMenuItemById('solo-panel');
+  if (item) item.checked = soloPanelChecked();
+}
+
 function buildMenu() {
   const isMac = process.platform === 'darwin';
   const recent = prefs.recent.filter(r => (r.kind === 'folder' ? isDir(r.path) : isFile(r.path)));
@@ -398,6 +409,14 @@ function buildMenu() {
     {
       label: '&View',
       submenu: [
+        {
+          id: 'solo-panel',
+          label: '&Solo Panel',
+          type: 'checkbox',
+          checked: soloPanelChecked(),
+          click: () => BrowserWindow.getFocusedWindow()?.webContents.send('toggle-solo-panel'),
+        },
+        { type: 'separator' },
         { role: 'togglefullscreen' },
         { type: 'separator' },
         { label: 'Zoom &In', role: 'zoomIn' },
@@ -457,7 +476,8 @@ function createWindow(initialPaths) {
       if (/^https?:/.test(url)) shell.openExternal(url);
     }
   });
-  windowState.set(win, { ready: false, queued: [], hasContent: false });
+  windowState.set(win, { ready: false, queued: [], hasContent: false, soloPanelVisible: true });
+  win.on('focus', syncSoloPanelMenuItem);
   win.webContents.on('did-start-loading', () => {
     windowState.get(win).ready = false;
   });
@@ -488,6 +508,14 @@ ipcMain.on('drop-paths', (event, paths) => {
       paths.filter(p => typeof p === 'string' && p),
       { replace: false }
     );
+  }
+});
+ipcMain.on('solo-panel-visibility', (event, visible) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  const state = win && windowState.get(win);
+  if (state) {
+    state.soloPanelVisible = visible !== false;
+    syncSoloPanelMenuItem();
   }
 });
 ipcMain.on('set-title', (event, title) => {

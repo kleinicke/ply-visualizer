@@ -181,17 +181,7 @@
 </script>
 
 {#if show}
-  {#if soloState.barCollapsed}
-    <button
-      class="solo-pill"
-      class:lit={active}
-      style:left="{rect.x}px"
-      style:top="{rect.y + rect.h - 28}px"
-      title={active && primaryIndex >= 0 ? `Solo: ${names[primaryIndex]}` : 'Show solo panel'}
-      onclick={() => (soloState.barCollapsed = false)}
-      >S{active && primaryIndex >= 0 ? ` · ${shortNames[primaryIndex]}` : ''}</button
-    >
-  {:else}
+  {#if !soloLayout.hidden}
     <div
       bind:this={panel}
       class="solo-panel"
@@ -231,9 +221,15 @@
           onclick={toggleAbbreviate}>a…z</button
         >
         {#if active}
-          <button class="hb" title="Exit solo (0 or Esc)" onclick={() => solo.exit()}>✕</button>
+          <button class="hb end-solo" title="End solo (0 or Esc)" onclick={() => solo.exit()}
+            >End solo</button
+          >
         {/if}
-        <button class="hb" title="Minimize" onclick={() => (soloState.barCollapsed = true)}>▾</button>
+        <button
+          class="hb"
+          title="Hide solo panel (show it again from View → Solo Panel or the file list)"
+          onclick={() => solo.setPanelHidden(true)}>✕</button
+        >
       </div>
       <div
         class="solo-body"
@@ -435,21 +431,8 @@
       transparent 80%
     );
   }
-  .solo-pill {
-    position: fixed;
-    z-index: 900;
-    max-width: 360px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    border: 1px solid var(--vscode-panel-border, #444);
-    background: color-mix(in srgb, var(--vscode-editor-background, #1e1e1e) 90%, transparent);
-    font-family: var(--vscode-font-family, system-ui, sans-serif);
-    font-size: 12px;
-    color: var(--vscode-foreground, #ccc);
-  }
-  .solo-pill.lit {
-    background: #f5c518;
-    color: #1a1a1a;
-    font-weight: 600;
+  .end-solo {
+    font-size: 11px;
+    color: #f5c518;
   }
 </style>

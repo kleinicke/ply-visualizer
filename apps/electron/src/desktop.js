@@ -62,6 +62,14 @@
 
   bridge.onShowShortcuts(() => window.visualizer?.showKeyboardShortcuts?.());
 
+  // View → Solo Panel mirrors the panel; the page reports every change
+  // (its own ✕ and file-list button included).
+  bridge.onToggleSoloPanel(() => window.visualizer?.solo?.togglePanel());
+  window.addEventListener('solo-panel-visibility', event =>
+    bridge.reportSoloPanel(event.detail.visible)
+  );
+  whenReady().then(viewer => bridge.reportSoloPanel(!viewer.solo.panelHidden));
+
   // "+ Add Point Cloud" keeps working through the page's own file input; the
   // File menu uses native dialogs (files or folders).
   whenReady().then(() => bridge.ready());
