@@ -23,8 +23,8 @@ runners and publishes a release with the installers and `SHA256SUMS.txt`. Bump
 `version` in `package.json`, then push a matching tag:
 
 ```sh
-git tag desktop-v0.1.2
-git push fork desktop-v0.1.2
+git tag desktop-v0.1.3
+git push fork desktop-v0.1.3
 ```
 
 Builds are unsigned (macOS Gatekeeper and Windows SmartScreen warn on first

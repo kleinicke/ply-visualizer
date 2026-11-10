@@ -72,9 +72,23 @@ jobs:
       - name: Package
         working-directory: apps/electron
         env:
-          # Unsigned builds: no code-signing identity on the runners.
+          # No Apple developer ID: macOS builds are ad-hoc signed
+          # (mac.identity "-"), Windows builds are unsigned.
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: npx electron-builder ${{ matrix.args }} --publish never
+
+      - name: Verify the macOS signature
+        if: matrix.name == 'macos'
+        shell: bash
+        run: |
+          # Ad-hoc signed (no Apple developer ID). An invalid signature makes
+          # macOS report the app as "damaged", so fail the build instead.
+          for app in release/mac*/*.app; do
+            echo "== $app"
+            codesign --verify --deep --strict --verbose=2 "$app"
+            codesign -dv "$app" 2>&1 | grep -E 'Identifier|Signature|Format'
+          done
+        working-directory: apps/electron
 
       - uses: actions/upload-artifact@v4
         with:
@@ -122,10 +136,12 @@ jobs:
             | Windows (x64) | `-setup.exe` installer or portable `.zip` |
             | macOS (Apple Silicon / Intel) | `.dmg` (`arm64` / `x64`) or `.zip` |
 
-            The builds are **not code-signed**:
-            - **macOS** blocks unsigned apps the first time. After copying the app to
-              Applications, run `xattr -cr "/Applications/PLY Visualizer.app"`, or
-              right-click it → Open.
+            The builds are not signed with a paid developer certificate:
+            - **macOS**: the app is ad-hoc signed, so the first launch is blocked as
+              coming from an unidentified developer. Open it once, then allow it in
+              *System Settings → Privacy & Security → Open Anyway*. Or, after
+              moving it to Applications, clear the download quarantine in Terminal:
+              `xattr -dr com.apple.quarantine "/Applications/PLY Visualizer.app"`
             - **Windows** SmartScreen may warn: choose *More info → Run anyway*.
             - **Linux**: `chmod +x` the AppImage, then run it; or install the package
               (`sudo apt install ./ply-visualizer-*.deb`, `sudo dnf install ./ply-visualizer-*.rpm`),

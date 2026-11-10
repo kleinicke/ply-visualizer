@@ -1,7 +1,7 @@
 {
   "name": "ply-visualizer-electron",
   "productName": "PLY Visualizer",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Standalone desktop app for point clouds and meshes (fork of kleinicke/ply-visualizer) with DAW-style solo and groups",
   "license": "MIT",
   "author": {
@@ -146,9 +146,10 @@
       ],
       "category": "public.app-category.graphics-design",
       "icon": "build/icon.png",
-      "identity": null,
+      "identity": "-",
       "hardenedRuntime": false,
-      "artifactName": "ply-visualizer-${version}-macos-${arch}.${ext}"
+      "artifactName": "ply-visualizer-${version}-macos-${arch}.${ext}",
+      "executableName": "PLY Visualizer"
     },
     "deb": {
       "artifactName": "ply-visualizer-${version}-linux-${arch}.${ext}"
