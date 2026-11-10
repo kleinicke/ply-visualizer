@@ -1,3 +1,47 @@
+# 3D Visualizer — desktop fork
+
+> **This is a fork of
+> [kleinicke/ply-visualizer](https://github.com/kleinicke/ply-visualizer),
+> produced with [Claude](https://claude.com/claude-code).** It aims to be
+> primarily a **standalone desktop app** (Linux, Windows, macOS) built on the
+> original's viewer engine, rather than a VS Code extension. The original
+> project's README continues [below](#3d-visualizer).
+
+![Solo panel and groups: one group shown, one method soloed](assets/desktop-solo-groups.png)
+
+## What this fork adds
+
+- **Standalone desktop app** (Electron, `apps/electron/`): the same Chromium
+  renderer as the VS Code webview, so the same speed, without an editor. Native
+  File menu (Open Files/Folder, Open Recent, Add Files/Folder, Clear Scene, New
+  Window), drag and drop of files and folders, command line
+  (`ply-visualizer a.ply some/folder`), every launch its own window. Website
+  analytics and links are stripped from the desktop build.
+- **DAW-style solo**: an `S` button per file and `1`–`9` keys show only that
+  file; `Shift`/`Ctrl` adds to the solo set, `↑`/`↓` or `[`/`]` step through,
+  `0`/`Esc` ends it. Solo never touches a file's own visibility checkbox, which
+  comes back when solo ends.
+- **Solo panel**: a floating, draggable, resizable list (or tile grid) of the
+  files, hideable from the View menu or the file list. Optional smart name
+  shortening collapses the parts every name shares (`…noise=0.01_seed=7`),
+  keeping `key=` when the value differs; the full name is always on hover.
+- **Groups**: a regular expression's capture group splits the open files into
+  groups, and one group at a time is listed and drawn. `←`/`→` switch groups;
+  the solo follows the file with the same name outside the captured part (e.g.
+  `kitchen/methodA` → `office/methodA`), and each group remembers its own
+  camera. Recent patterns and presets are one click away, with built-in help.
+- **Folders as groups**: opening a folder names files by their path inside it,
+  so grouping by subfolder is just the `^([^/]+)/` pattern (OS separator); a
+  folder with no files at its top level offers exactly that.
+- **Viewer UI**: the side panel resizes from its edges, the file list is no
+  longer height-capped, and Collapse all / Expand all buttons sit under the
+  group controls. UI drags never move the 3D view.
+
+See [apps/electron/README.md](apps/electron/README.md) for building and the full
+list of shortcuts.
+
+---
+
 # 3D Visualizer
 
 View, compare and inspect point clouds, meshes, gaussian splats, depth maps and
