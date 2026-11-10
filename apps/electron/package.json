@@ -86,7 +86,7 @@
       ],
       "category": "Graphics",
       "syncDesktopName": true,
-      "icon": "build/icon.png",
+      "icon": "build/icons",
       "mimeTypes": [
         "application/x-ply",
         "model/x-ply",
@@ -97,7 +97,22 @@
       ],
       "maintainer": "deivse <deivse@users.noreply.github.com>",
       "vendor": "deivse",
-      "synopsis": "Point cloud and mesh viewer with solo and groups"
+      "synopsis": "Point cloud and mesh viewer with solo and groups",
+      "desktop": {
+        "entry": {
+          "Name": "PLY Visualizer",
+          "GenericName": "Point Cloud Viewer",
+          "Keywords": "plyviz;point cloud;pointcloud;mesh;3D;viewer;PLY;PCD;LAS;LAZ;E57;STL;OBJ;glTF;splat;",
+          "Actions": "NewWindow;"
+        },
+        "desktopActions": {
+          "NewWindow": {
+            "Name": "New Window",
+            "Exec": "\"/opt/PLY Visualizer/plyviz\""
+          }
+        }
+      },
+      "description": "View and compare point clouds and meshes"
     },
     "win": {
       "target": [
