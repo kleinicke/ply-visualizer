@@ -32,13 +32,13 @@ launch; the release notes explain how to proceed).
 
 ## Opening files
 
-| File menu                                   | Effect                                      |
-| ------------------------------------------- | ------------------------------------------- |
-| Open Files… `Ctrl+O`                        | Replace the scene with the chosen files     |
-| Open Folder… `Ctrl+Shift+O`                 | Replace the scene with a folder (recursive) |
-| Open Recent                                 | Recent files and folders                    |
-| Add Files… `Ctrl+Alt+O` / Add Folder…       | Add to the current scene                    |
-| Clear Scene, New Window, Close Window, Quit |                                             |
+| File menu                                               | Effect                                      |
+| ------------------------------------------------------- | ------------------------------------------- |
+| Open Files… `Ctrl+O`                                    | Replace the scene with the chosen files     |
+| Open Folder… `Ctrl+Shift+O`                             | Replace the scene with a folder (recursive) |
+| Open Recent                                             | Recent files and folders                    |
+| Add Files to Scene… `Ctrl+Alt+O` / Add Folder to Scene… | Add to the current scene                    |
+| Clear Scene, New Window, Close Window, Quit             |                                             |
 
 The command line (`plyviz a.ply b.ply`, `plyviz some/folder`), drag and drop
 (files or folders) and the page's "+ Add Point Cloud" work too. Each launch is

@@ -277,19 +277,23 @@ async function openPaths(win, paths, { replace }) {
 
 /** token -> absolute path, for files the user chose to open. */
 const openedFiles = new Map();
-/** Per window: viewer ready, payloads waiting for it, whether it shows files. */
+/** Per window: viewer ready, and payloads waiting for it. */
 const windowState = new WeakMap();
 
 function deliver(win, payload) {
   const state = windowState.get(win);
-  if (payload.replace && state.hasContent) {
-    // "Open" replaces the scene: start from a fresh page, then load.
+  if (payload.replace) {
+    // "Open" replaces the scene: load into a fresh page. This host cannot
+    // know what the page shows (files also arrive through the page's own
+    // button and drops), so a loaded page is always reloaded; a page still
+    // loading is fresh already. Anything queued before is superseded.
     state.queued = [{ ...payload, replace: false }];
-    state.hasContent = false;
-    win.webContents.reload();
+    if (state.ready) {
+      state.ready = false;
+      win.webContents.reload();
+    }
     return;
   }
-  state.hasContent = true;
   if (!state.ready) {
     state.queued.push(payload);
     return;
@@ -303,7 +307,9 @@ const focusedWindow = () =>
 async function pick(win, kind, replace) {
   const folder = kind === 'folder';
   const result = await dialog.showOpenDialog(win, {
-    title: `${replace ? 'Open' : 'Add'} ${folder ? 'Folder' : 'Files'}`,
+    title: replace
+      ? `Open ${folder ? 'Folder' : 'Files'} (replaces the scene)`
+      : `Add ${folder ? 'Folder' : 'Files'} to Scene`,
     properties: folder ? ['openDirectory'] : ['openFile', 'multiSelections'],
     filters: folder
       ? undefined
@@ -318,7 +324,7 @@ async function pick(win, kind, replace) {
 }
 
 function clearScene(win) {
-  windowState.get(win).hasContent = false;
+  windowState.get(win).queued = [];
   win.webContents.reload();
 }
 
@@ -375,11 +381,11 @@ function buildMenu() {
         },
         { type: 'separator' },
         {
-          label: '&Add Files…',
+          label: '&Add Files to Scene…',
           accelerator: 'CmdOrCtrl+Alt+O',
           click: () => pick(focusedWindow(), 'files', false),
         },
-        { label: 'Add Fol&der…', click: () => pick(focusedWindow(), 'folder', false) },
+        { label: 'Add Fol&der to Scene…', click: () => pick(focusedWindow(), 'folder', false) },
         { type: 'separator' },
         { label: '&Clear Scene', click: () => clearScene(focusedWindow()) },
         { type: 'separator' },
@@ -476,7 +482,7 @@ function createWindow(initialPaths) {
       if (/^https?:/.test(url)) shell.openExternal(url);
     }
   });
-  windowState.set(win, { ready: false, queued: [], hasContent: false, soloPanelVisible: true });
+  windowState.set(win, { ready: false, queued: [], soloPanelVisible: true });
   win.on('focus', syncSoloPanelMenuItem);
   win.webContents.on('did-start-loading', () => {
     windowState.get(win).ready = false;
@@ -495,10 +501,7 @@ ipcMain.on('renderer-ready', event => {
   state.ready = true;
   const queued = state.queued;
   state.queued = [];
-  for (const payload of queued) {
-    state.hasContent = true;
-    win.webContents.send('open-files', payload);
-  }
+  for (const payload of queued) win.webContents.send('open-files', payload);
 });
 ipcMain.on('drop-paths', (event, paths) => {
   const win = BrowserWindow.fromWebContents(event.sender);
