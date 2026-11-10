@@ -47,13 +47,71 @@
     }
   }
 
-  function onPick(event: Event) {
-    const select = event.currentTarget as HTMLSelectElement;
-    if (select.value) {
-      draft = select.value;
-      apply(select.value);
+  // Recent patterns + presets menu. A custom menu rather than a <select>:
+  // the native popup opens left-aligned and as wide as its longest pattern,
+  // which runs off the right edge of the window. This one is right-aligned
+  // to the button, width-capped and positioned in viewport coordinates so the
+  // panel's own scrolling/clipping cannot cut it off.
+  type MenuItem = { source: string; label: string | null };
+  const menuItems = $derived<{ heading: string; items: MenuItem[] }[]>([
+    ...(fileGroupsState.recent.length
+      ? [{ heading: 'Recent', items: fileGroupsState.recent.map((source: string) => ({ source, label: null })) }]
+      : []),
+    { heading: 'Presets', items: presets.map((p) => ({ source: p.source, label: p.label })) },
+  ]);
+  const flatItems = $derived(menuItems.flatMap((section) => section.items));
+  let menuOpen = $state(false);
+  let menuButton = $state<HTMLButtonElement | null>(null);
+  let menuEl = $state<HTMLDivElement | null>(null);
+  let menuPos = $state({ top: 0, right: 0, maxHeight: 300, maxWidth: 420 });
+  let highlighted = $state(-1);
+
+  function placeMenu() {
+    if (!menuButton) return;
+    const rect = menuButton.getBoundingClientRect();
+    const margin = 8;
+    menuPos = {
+      top: rect.bottom + 2,
+      right: Math.max(margin, window.innerWidth - rect.right),
+      maxHeight: Math.max(120, window.innerHeight - rect.bottom - margin - 2),
+      // Long patterns ellipsize (hover shows them in full) instead of
+      // stretching the menu across the window.
+      maxWidth: Math.max(200, Math.min(480, rect.right - margin)),
+    };
+  }
+
+  function openMenu() {
+    placeMenu();
+    highlighted = flatItems.findIndex((item) => item.source === fileGroupsState.regex);
+    menuOpen = true;
+    queueMicrotask(() => menuEl?.focus());
+  }
+
+  function closeMenu(refocus = true) {
+    menuOpen = false;
+    if (refocus) menuButton?.focus();
+  }
+
+  function pick(source: string) {
+    draft = source;
+    apply(source);
+    closeMenu();
+  }
+
+  function onMenuKeydown(event: KeyboardEvent) {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      const delta = event.key === 'ArrowDown' ? 1 : -1;
+      highlighted = (highlighted + delta + flatItems.length) % flatItems.length;
+      menuEl?.querySelectorAll('.group-menu-item')[highlighted]?.scrollIntoView({ block: 'nearest' });
+    } else if (event.key === 'Enter' && highlighted >= 0) {
+      pick(flatItems[highlighted].source);
+    } else if (event.key === 'Escape' || event.key === 'Tab') {
+      closeMenu(event.key === 'Escape');
+    } else {
+      return;
     }
-    select.value = '';
+    event.preventDefault();
+    event.stopPropagation();
   }
 
   function setAllCollapsed(collapsed: boolean) {
@@ -63,8 +121,12 @@
   }
 
   function onWindowPointerDown(event: PointerEvent) {
-    if (helpOpen && !(event.target as HTMLElement).closest('.group-help, .group-help-btn')) {
+    const target = event.target as HTMLElement;
+    if (helpOpen && !target.closest('.group-help, .group-help-btn')) {
       helpOpen = false;
+    }
+    if (menuOpen && !target.closest('.group-menu, .group-recent')) {
+      closeMenu(false);
     }
   }
   function onWindowKeydown(event: KeyboardEvent) {
@@ -72,7 +134,11 @@
   }
 </script>
 
-<svelte:window onpointerdown={onWindowPointerDown} onkeydown={onWindowKeydown} />
+<svelte:window
+  onpointerdown={onWindowPointerDown}
+  onkeydown={onWindowKeydown}
+  onresize={() => menuOpen && placeMenu()}
+/>
 
 {#if hasFiles}
   <div class="file-list-toolbar">
@@ -146,21 +212,55 @@
         onkeydown={onRegexKeydown}
         onblur={() => draft !== fileGroupsState.regex && apply()}
       />
-      <select class="group-recent" title="Recent patterns and presets" onchange={onPick} value="">
-        <option value="" disabled>Recent…</option>
-        {#if fileGroupsState.recent.length}
-          <optgroup label="Recent">
-            {#each fileGroupsState.recent as source (source)}
-              <option value={source}>{source}</option>
+      <button
+        bind:this={menuButton}
+        class="group-recent"
+        class:open={menuOpen}
+        title="Recent patterns and presets"
+        aria-haspopup="menu"
+        aria-expanded={menuOpen}
+        onclick={() => (menuOpen ? closeMenu() : openMenu())}
+        onkeydown={(e) => {
+          if (e.key === 'ArrowDown' && !menuOpen) {
+            e.preventDefault();
+            openMenu();
+          }
+        }}>Recent ▾</button
+      >
+      {#if menuOpen}
+        <div
+          bind:this={menuEl}
+          class="group-menu"
+          role="menu"
+          tabindex="-1"
+          aria-label="Recent patterns and presets"
+          style:top="{menuPos.top}px"
+          style:right="{menuPos.right}px"
+          style:max-height="{menuPos.maxHeight}px"
+          style:max-width="{menuPos.maxWidth}px"
+          onkeydown={onMenuKeydown}
+        >
+          {#each menuItems as section (section.heading)}
+            <div class="group-menu-heading">{section.heading}</div>
+            {#each section.items as item (section.heading + item.source)}
+              {@const index = flatItems.indexOf(item)}
+              <button
+                class="group-menu-item"
+                class:highlighted={index === highlighted}
+                class:current={item.source === fileGroupsState.regex}
+                role="menuitem"
+                tabindex="-1"
+                title={item.label ? `${item.label}\n${item.source}` : item.source}
+                onpointerenter={() => (highlighted = index)}
+                onclick={() => pick(item.source)}
+              >
+                {#if item.label}<span class="group-menu-label">{item.label}</span>{/if}
+                <code class="group-menu-source">{item.source}</code>
+              </button>
             {/each}
-          </optgroup>
-        {/if}
-        <optgroup label="Presets">
-          {#each presets as preset (preset.source)}
-            <option value={preset.source}>{preset.label}: {preset.source}</option>
           {/each}
-        </optgroup>
-      </select>
+        </div>
+      {/if}
     </div>
     {#if !draftCheck.ok}
       <div class="group-status error">{draftCheck.error}</div>
@@ -289,13 +389,77 @@
     border-color: var(--vscode-inputValidation-errorBorder, #be1100);
   }
   .group-recent {
-    width: 74px;
+    flex-shrink: 0;
     font: inherit;
     font-size: 11px;
+    white-space: nowrap;
+    cursor: pointer;
+    padding: 1px 6px;
     color: var(--vscode-dropdown-foreground, var(--vscode-foreground));
     background: var(--vscode-dropdown-background, var(--vscode-input-background));
     border: 1px solid var(--vscode-dropdown-border, var(--vscode-input-border));
     border-radius: 3px;
+  }
+  .group-recent.open {
+    border-color: var(--vscode-focusBorder, #0078d4);
+  }
+  .group-menu {
+    position: fixed;
+    z-index: 1000;
+    min-width: 220px;
+    overflow-y: auto;
+    padding: 4px 0;
+    border: 1px solid var(--vscode-menu-border, var(--vscode-focusBorder, #454545));
+    border-radius: 5px;
+    background: var(--vscode-menu-background, var(--vscode-editorWidget-background, #252526));
+    color: var(--vscode-menu-foreground, var(--vscode-foreground));
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+    font-size: 11.5px;
+    outline: none;
+  }
+  .group-menu-heading {
+    padding: 4px 10px 2px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    opacity: 0.6;
+  }
+  .group-menu-item {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1px;
+    width: 100%;
+    padding: 3px 10px;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .group-menu-item.highlighted {
+    background: var(--vscode-menu-selectionBackground, var(--vscode-list-activeSelectionBackground, #04395e));
+    color: var(--vscode-menu-selectionForeground, inherit);
+  }
+  .group-menu-item.current .group-menu-source::after {
+    content: '  ✓';
+  }
+  .group-menu-label {
+    font-size: 11px;
+    opacity: 0.85;
+  }
+  .group-menu-label,
+  .group-menu-source {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .group-menu-source {
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 11px;
   }
   .group-status {
     font-size: 10.5px;
