@@ -5,10 +5,14 @@
   import AllPointColors from './AllPointColors.svelte';
   import AllPointSizes from './AllPointSizes.svelte';
   import FileItem from './FileItem.svelte';
+  import FileGroups from './FileGroups.svelte';
 
   let { host }: { host: FileListHost } = $props();
 
-  const entryRows = $derived(fileRows(host, filesState.entries));
+  // Only the active scene's files are listed when grouping by prefix.
+  const entryRows = $derived(
+    fileRows(host, filesState.entries).filter((row) => host.solo.inScope(row.entry)),
+  );
   const totalEntries = $derived(entryRows.length);
 
   const isSequenceFrame = $derived(
@@ -52,6 +56,7 @@
 {:else if totalEntries === 0 && !pendingLoadLabel}
   <div class="no-files">No objects loaded</div>
 {:else}
+  <FileGroups {host} />
   {#each entryRows as row (row.entry.id)}
     <FileItem
       {host}

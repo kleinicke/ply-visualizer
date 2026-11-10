@@ -1,0 +1,90 @@
+{
+  "name": "ply-visualizer-electron",
+  "productName": "PLY Visualizer",
+  "version": "1.9.0",
+  "description": "Standalone desktop build of the 3D point cloud and mesh visualizer, with DAW-style solo",
+  "license": "MIT",
+  "author": "kleinicke (upstream ply-visualizer), desktop shell contributors",
+  "homepage": "https://github.com/kleinicke/ply-visualizer",
+  "main": "src/main.js",
+  "desktopName": "ply-visualizer.desktop",
+  "private": true,
+  "scripts": {
+    "build:web": "node scripts/build-web.mjs",
+    "start": "electron .",
+    "dev": "node scripts/build-web.mjs && electron .",
+    "dist:linux": "node scripts/build-web.mjs && electron-builder --linux",
+    "dist:win": "node scripts/build-web.mjs && electron-builder --win",
+    "dist": "node scripts/build-web.mjs && electron-builder --linux --win"
+  },
+  "build": {
+    "appId": "de.f-kleinicke.ply-visualizer.desktop",
+    "productName": "PLY Visualizer",
+    "executableName": "ply-visualizer",
+    "artifactName": "ply-visualizer-${version}-${os}-${arch}.${ext}",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**",
+      "web/**",
+      "build/icon.png",
+      "package.json"
+    ],
+    "asar": true,
+    "fileAssociations": [
+      {
+        "ext": [
+          "ply",
+          "pcd",
+          "xyz",
+          "pts",
+          "las",
+          "laz",
+          "e57",
+          "stl",
+          "obj",
+          "off",
+          "glb",
+          "gltf"
+        ],
+        "name": "3D point cloud / mesh",
+        "role": "Viewer"
+      }
+    ],
+    "linux": {
+      "target": [
+        "AppImage",
+        "tar.gz"
+      ],
+      "category": "Graphics",
+      "syncDesktopName": true,
+      "icon": "build/icon.png",
+      "mimeTypes": [
+        "application/x-ply",
+        "model/x-ply",
+        "model/stl",
+        "model/obj",
+        "model/gltf-binary",
+        "model/gltf+json"
+      ]
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "zip"
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false
+    }
+  },
+  "devDependencies": {
+    "electron": "^45.2.3",
+    "electron-builder": "^26.18.0"
+  }
+}

@@ -37,6 +37,7 @@ export interface FileItemHost {
     settings: import('../visualization/stonexColorCorrection').StonexColorCorrection
   ): void;
   soloPointCloud(index: number): void;
+  solo: import('../soloMode').SoloController;
   toggleCameraProfileCoordinates(index: number, enabled: boolean): void;
   toggleCameraProfileLabels(index: number, enabled: boolean): void;
   toggleFileVisibility(index: number): void;
@@ -47,6 +48,7 @@ export interface FileItemHost {
   updatePoseScaling(index: number): void;
 }
 export interface FileListHost extends FileItemHost {
+  setFileEntryVisibility(index: number, visible: boolean): void;
   pendingLoadDetail: string;
   pendingLoadLabel: string | null;
   sequenceFiles: string[];

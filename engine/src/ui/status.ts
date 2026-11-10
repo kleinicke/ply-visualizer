@@ -156,6 +156,14 @@ export function createShortcutsUI(onUpdateControlStatus: () => void): void {
             <div style="font-family: var(--vscode-editor-font-family); line-height: 1.4;">
                 <div><span style="font-weight: bold;">Left Click + Drag</span> Move camera around</div>
                 <div><span style="font-weight: bold;">Shift+Click</span> Solo point cloud (hide others)</div>
+            </div>
+            <div style="font-weight: bold; margin: 8px 0 4px 0; color: var(--vscode-textLink-foreground);">🎚️ Solo</div>
+            <div style="font-family: var(--vscode-editor-font-family); line-height: 1.4;">
+                <div><span style="font-weight: bold;">1–9</span> Solo the Nth object (again: end solo)</div>
+                <div><span style="font-weight: bold;">Shift+1–9</span> Add/remove from solo</div>
+                <div><span style="font-weight: bold;">[ ] / ↑ ↓</span> Step solo to previous/next</div>
+                <div><span style="font-weight: bold;">← → / , .</span> Previous/next scene (Group by prefix)</div>
+                <div><span style="font-weight: bold;">0 / Esc</span> End solo, restore visibility</div>
                 <div><span style="font-weight: bold;">Double-Click</span> Set rotation center</div>
                 <div><span style="font-weight: bold;">Shift + Double-Click</span> Add a measurement-path point</div>
             </div>

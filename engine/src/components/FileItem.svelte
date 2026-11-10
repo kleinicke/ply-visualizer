@@ -3,6 +3,7 @@
   import type { FileItemHost, FileRow } from './fileListTypes';
   import ModelAnimationPanel from './ModelAnimationPanel.svelte';
   import { filesState } from '../state/files.svelte';
+  import { soloState } from '../state/solo.svelte';
   import { runWithFileActivity } from '../fileActivity';
   import { getPointCloudColorOptions } from '../colorOptions';
   import { ensureKeyboardModifierTracking, isShiftPressed } from '../keyboardModifiers';
@@ -44,7 +45,26 @@
       : null;
   });
 
-  const visible = $derived(row.entry.state.visible ?? true);
+  // While solo is active the checkbox is the entry's own setting ("mute");
+  // what is actually shown is decided by the solo set.
+  const soloActive = $derived(soloState.ids.length > 0);
+  const visible = $derived(
+    soloState.layered && row.entry.id in soloState.saved
+      ? soloState.saved[row.entry.id]
+      : (row.entry.state.visible ?? true),
+  );
+  const soloed = $derived(soloState.ids.includes(row.entry.id));
+  const hiddenBySolo = $derived(soloActive && !(row.entry.state.visible ?? true));
+  const canSolo = $derived(row.entry.parentId === null && !!host.solo);
+
+  function onSoloClick(e: MouseEvent) {
+    e.stopPropagation();
+    if (e.ctrlKey || e.metaKey || e.shiftKey) {
+      host.solo.toggleAdditive(row.entry.id);
+    } else {
+      host.solo.soloExclusive(row.entry.id);
+    }
+  }
   const collapsed = $derived(row.entry.state.collapsed ?? false);
   const colorMode = $derived(row.entry.state.colorMode ?? 'assigned');
 
@@ -129,7 +149,7 @@
       // Synchronize once the browser has completed the cancelled default
       // action; all other checkboxes update reactively through filesState.
       window.setTimeout(() => {
-        checkbox.checked = row.entry.state.visible ?? true;
+        checkbox.checked = visible;
       }, 0);
       return;
     }
@@ -545,6 +565,7 @@
 
 <div
   class="file-item"
+  class:solo-hidden={hiddenBySolo}
   data-entry-id={row.entry.id}
   use:longPressFileReorder={{ host, entryId: row.entry.id }}
   style:touch-action={collapsed ? 'none' : undefined}
@@ -570,7 +591,17 @@
       id={`file-${index}`}
       checked={visible}
       onclick={onVisibilityClick}
+      title={soloActive ? 'Own visibility (applies when solo ends)' : 'Visible (Shift-click: solo)'}
     />
+    {#if canSolo}
+      <button
+        class="solo-toggle"
+        class:lit={soloed}
+        title="Solo (only show this). Ctrl/Shift-click: add to solo"
+        aria-pressed={soloed}
+        onclick={onSoloClick}>S</button
+      >
+    {/if}
     <span class="color-indicator" style={colorIndicatorStyle()}></span>
     <label for={`file-${index}`} class="file-name" data-short-path={shortPath}>{name}</label>
     <button class="remove-file" data-file-index={index} title={removeTitle} onclick={onRemove}
