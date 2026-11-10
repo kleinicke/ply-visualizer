@@ -1,27 +1,28 @@
 import type { FileEntry, FileEntryRegistry } from './state/fileEntries';
 import { soloState } from './state/solo.svelte';
-import { fileGroupsState, saveFileGroups } from './state/fileGroups.svelte';
-import { groupByPrefix, type PrefixGroup } from './utils/prefixGroups';
+import { fileGroupsState, saveFileGroups, rememberGroupRegex } from './state/fileGroups.svelte';
+import { compileGroupRegex, groupByRegex, type RegexGroup } from './utils/regexGroups';
 import type { ViewerLifetime } from './utils/viewerLifetime';
 
 /**
- * Layered visibility: scene scope + DAW-style solo, over each entry's own
+ * Layered visibility: group scope + DAW-style solo, over each entry's own
  * visibility setting (its checkbox, "mute").
  *
- *   effective = inActiveScene && (soloActive ? soloed : ownVisible)
+ *   effective = inActiveGroup && (soloActive ? soloed : ownVisible)
  *
  * While any layer is active, the own settings live in `soloState.saved` and
  * `entry.state.visible` holds the effective value, so every renderer/picker
  * that reads it stays correct without knowing about layers. When the last
  * layer ends, the own settings are written back.
  *
- * Scenes ("Group by prefix"): files whose names share their first N parts form
- * a scene; only one scene is listed and drawn at a time. Switching scenes
- * keeps the solo on the same method (the name after the scene prefix).
+ * Groups: a regex's first capture group, applied to each file's name (a path
+ * relative to an opened folder, or the file name), gives its group; only one
+ * group is listed and drawn at a time. Switching groups keeps the solo on the
+ * file whose name is the same outside the captured text.
  *
  * Solo: 1-9 / click S = exclusive solo (again = end); Shift+1-9 / Ctrl-click =
- * add/remove; [ ] ↑ ↓ step; 0 / Esc end. Scenes: ← → , . PageUp PageDown
- * (← → step solo instead when there is only one scene).
+ * add/remove; [ ] ↑ ↓ step; 0 / Esc end. Groups: ← → , . PageUp PageDown
+ * (← → step solo instead when there is only one group).
  * Children (camera frames of a scan, …) follow their top-level parent.
  */
 export interface SoloHost {
@@ -52,12 +53,12 @@ export class SoloController {
     return soloState.ids.length > 0;
   }
 
-  /** Any layer (solo or scene scope) is active; own settings are in `saved`. */
+  /** Any layer (solo or group scope) is active; own settings are in `saved`. */
   get layered(): boolean {
     return soloState.layered;
   }
 
-  // ---- ordering and scenes -------------------------------------------------
+  // ---- ordering and groups -------------------------------------------------
 
   /** Every top-level entry in sidebar order. */
   topLevel(): FileEntry[] {
@@ -72,29 +73,30 @@ export class SoloController {
       .map(({ entry }) => entry);
   }
 
-  /** Top-level entries of the active scene; what number keys and stepping address. */
+  /** Top-level entries of the active group; what number keys and stepping address. */
   soloable(): FileEntry[] {
     const scope = soloState.scopeIds;
     const all = this.topLevel();
     return scope ? all.filter(entry => scope.includes(entry.id)) : all;
   }
 
-  /** Scenes, when grouping is on; every file belongs to exactly one. */
-  groups(): PrefixGroup<FileEntry>[] {
+  /** Groups, when grouping is on and the regex is valid; every file is in one. */
+  groups(): RegexGroup<FileEntry>[] {
     if (!fileGroupsState.enabled) {
       return [];
     }
-    return groupByPrefix(this.topLevel(), entryDisplayName, fileGroupsState.depth, {
-      minMembers: 1,
-      fallbackToStem: true,
-    });
+    const compiled = compileGroupRegex(fileGroupsState.regex);
+    if (!compiled.ok) {
+      return [];
+    }
+    return groupByRegex(this.topLevel(), entryDisplayName, compiled.regex);
   }
 
-  activeGroup(groups = this.groups()): PrefixGroup<FileEntry> | null {
-    return groups.find(group => group.prefix === fileGroupsState.active) ?? groups[0] ?? null;
+  activeGroup(groups = this.groups()): RegexGroup<FileEntry> | null {
+    return groups.find(group => group.key === fileGroupsState.active) ?? groups[0] ?? null;
   }
 
-  /** Is this entry (or its top-level ancestor) in the active scene? */
+  /** Is this entry (or its top-level ancestor) in the active group? */
   inScope(entry: FileEntry): boolean {
     const scope = soloState.scopeIds;
     if (!scope) {
@@ -109,24 +111,34 @@ export class SoloController {
     this.refreshScope();
   }
 
-  setGroupDepth(depth: number): void {
-    fileGroupsState.depth = Math.min(8, Math.max(1, depth));
+  /**
+   * Sets the grouping pattern. A valid pattern is remembered in the recent
+   * list; an invalid one is kept (so it can be fixed) but groups nothing.
+   */
+  setGroupRegex(source: string, enable = fileGroupsState.enabled): boolean {
+    const compiled = compileGroupRegex(source);
+    fileGroupsState.regex = source;
+    fileGroupsState.enabled = enable;
+    if (compiled.ok) {
+      rememberGroupRegex(source);
+    }
     saveFileGroups();
     this.refreshScope();
+    return compiled.ok;
   }
 
-  setActiveGroup(prefix: string): void {
+  setActiveGroup(key: string): void {
     const groups = this.groups();
     const previous = this.activeGroup(groups);
-    const next = groups.find(group => group.prefix === prefix);
+    const next = groups.find(group => group.key === key);
     if (!next) {
       return;
     }
-    // Solo carries over by method: the part of the name after the prefix.
+    // Solo carries over to the file with the same name outside the capture.
     let soloIds: number[] = [];
     let primaryId: number | null = null;
     if (this.active && previous && previous !== next) {
-      const restOf = (group: PrefixGroup<FileEntry>, id: number) =>
+      const restOf = (group: RegexGroup<FileEntry>, id: number) =>
         group.rests[group.members.findIndex(member => member.id === id)];
       for (const id of soloState.ids) {
         const rest = restOf(previous, id);
@@ -146,7 +158,7 @@ export class SoloController {
       soloIds = soloState.ids;
       primaryId = soloState.primaryId;
     }
-    fileGroupsState.active = next.prefix;
+    fileGroupsState.active = next.key;
     saveFileGroups();
     soloState.ids = soloIds;
     soloState.primaryId = primaryId;
@@ -160,18 +172,18 @@ export class SoloController {
     }
     const current = groups.indexOf(this.activeGroup(groups)!);
     const next = groups[(current + delta + groups.length) % groups.length];
-    this.setActiveGroup(next.prefix);
-    this.host.showStatus(`Scene: ${next.prefix}`);
+    this.setActiveGroup(next.key);
+    this.host.showStatus(`Group: ${next.key}`);
   }
 
-  /** Recomputes the active scene from the current files and settings. */
+  /** Recomputes the active group from the current files and settings. */
   refreshScope(): void {
     const group = this.activeGroup();
     const scope = fileGroupsState.enabled && group ? group.members.map(member => member.id) : null;
     if (scope) {
       this.begin();
       soloState.scopeIds = scope;
-      // Solo outside the scene means nothing; drop it.
+      // Solo outside the group means nothing; drop it.
       const ids = soloState.ids.filter(id => scope.includes(id));
       if (ids.length !== soloState.ids.length) {
         soloState.ids = ids;
@@ -276,7 +288,7 @@ export class SoloController {
     this.apply();
   }
 
-  /** Ends solo; the scene scope (if any) stays. */
+  /** Ends solo; the group scope (if any) stays. */
   exit(): void {
     if (!this.active) {
       return;
@@ -425,12 +437,12 @@ export class SoloController {
         event.preventDefault();
         return;
       }
-      // ←/→ switch scenes when there are scenes, otherwise they step solo.
-      const scenes = this.groups().length > 1;
+      // ←/→ switch groups when there are groups, otherwise they step solo.
+      const multipleGroups = this.groups().length > 1;
       switch (event.key) {
         case 'ArrowLeft':
         case 'ArrowRight':
-          if (scenes) {
+          if (multipleGroups) {
             this.stepGroup(event.key === 'ArrowLeft' ? -1 : 1);
           } else {
             this.step(event.key === 'ArrowLeft' ? -1 : 1);

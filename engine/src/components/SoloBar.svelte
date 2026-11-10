@@ -15,17 +15,17 @@
     soloState.scopeIds;
     return solo.soloable();
   });
-  const sceneName = $derived.by(() => {
+  const groupName = $derived.by(() => {
     filesState.entries;
     soloState.scopeIds;
     fileGroupsState.enabled;
     fileGroupsState.active;
-    return fileGroupsState.enabled ? (solo.activeGroup()?.prefix ?? '') : '';
+    return fileGroupsState.enabled ? (solo.activeGroup()?.key ?? '') : '';
   });
   const active = $derived(soloState.ids.length > 0);
   const show = $derived(
     (filesState.entries,
-    (items.length >= 2 || (!!sceneName && solo.groups().length > 1)) && !sequenceMode()),
+    (items.length >= 2 || (!!groupName && solo.groups().length > 1)) && !sequenceMode()),
   );
   const names = $derived(items.map(entryName));
   const shortNames = $derived(smartAbbreviate(names));
@@ -206,10 +206,10 @@
       <div class="solo-header" onpointerdown={onHeaderPointerDown} title="Drag to move">
         <span class="solo-label" class:lit={active}>SOLO</span>
         <span class="solo-count">{active ? `${soloState.ids.length}/${items.length}` : items.length}</span>
-        {#if sceneName}
-          <button class="hb" title="Previous scene (←)" onclick={() => solo.stepGroup(-1)}>«</button>
-          <span class="solo-scene" title={`Scene: ${sceneName}`}>{sceneName}</span>
-          <button class="hb" title="Next scene (→)" onclick={() => solo.stepGroup(1)}>»</button>
+        {#if groupName}
+          <button class="hb" title="Previous group (←)" onclick={() => solo.stepGroup(-1)}>«</button>
+          <span class="solo-group" title={`Group: ${groupName}`}>{groupName}</span>
+          <button class="hb" title="Next group (→)" onclick={() => solo.stepGroup(1)}>»</button>
         {/if}
         <button class="hb" title="Previous ([ or ↑)" onclick={() => solo.step(-1)}>‹</button>
         <button class="hb" title="Next (] or ↓)" onclick={() => solo.step(1)}>›</button>
@@ -307,7 +307,7 @@
     color: #f5c518;
     opacity: 1;
   }
-  .solo-scene {
+  .solo-group {
     font-weight: 600;
     max-width: 180px;
     overflow: hidden;
