@@ -15,8 +15,8 @@
   renderer as the VS Code webview, so the same speed, without an editor. Native
   File menu (Open Files/Folder, Open Recent, Add Files/Folder, Clear Scene, New
   Window), drag and drop of files and folders, command line
-  (`ply-visualizer a.ply some/folder`), every launch its own window. Website
-  analytics and links are stripped from the desktop build.
+  (`plyviz a.ply some/folder`), every launch its own window. Website analytics
+  and links are stripped from the desktop build.
 - **DAW-style solo**: an `S` button per file and `1`–`9` keys show only that
   file; `Shift`/`Ctrl` adds to the solo set, `↑`/`↓` or `[`/`]` step through,
   `0`/`Esc` ends it. Solo never touches a file's own visibility checkbox, which

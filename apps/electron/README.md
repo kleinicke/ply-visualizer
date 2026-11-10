@@ -23,8 +23,8 @@ runners and publishes a release with the installers and `SHA256SUMS.txt`. Bump
 `version` in `package.json`, then push a matching tag:
 
 ```sh
-git tag desktop-v0.1.0
-git push fork desktop-v0.1.0
+git tag desktop-v0.1.1
+git push fork desktop-v0.1.1
 ```
 
 Builds are unsigned (macOS Gatekeeper and Windows SmartScreen warn on first
@@ -40,9 +40,9 @@ launch; the release notes explain how to proceed).
 | Add Files… `Ctrl+Alt+O` / Add Folder…       | Add to the current scene                    |
 | Clear Scene, New Window, Close Window, Quit |                                             |
 
-The command line (`ply-visualizer a.ply b.ply`, `ply-visualizer some/folder`),
-drag and drop (files or folders) and the page's "+ Add Point Cloud" work too.
-Each launch is its own independent window.
+The command line (`plyviz a.ply b.ply`, `plyviz some/folder`), drag and drop
+(files or folders) and the page's "+ Add Point Cloud" work too. Each launch is
+its own independent window.
 
 Files from an opened folder are named by their path relative to it
 (`kitchen/methodA.ply`, OS separator). If the folder has no files at its top

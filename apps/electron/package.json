@@ -1,13 +1,16 @@
 {
   "name": "ply-visualizer-electron",
   "productName": "PLY Visualizer",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Standalone desktop app for point clouds and meshes (fork of kleinicke/ply-visualizer) with DAW-style solo and groups",
   "license": "MIT",
-  "author": "deivse (desktop fork of kleinicke/ply-visualizer)",
+  "author": {
+    "name": "deivse",
+    "email": "deivse@users.noreply.github.com"
+  },
   "homepage": "https://github.com/deivse/ply-visualizer",
   "main": "src/main.js",
-  "desktopName": "ply-visualizer.desktop",
+  "desktopName": "plyviz.desktop",
   "private": true,
   "scripts": {
     "build:web": "node scripts/build-web.mjs",
@@ -20,7 +23,7 @@
   "build": {
     "appId": "de.f-kleinicke.ply-visualizer.desktop",
     "productName": "PLY Visualizer",
-    "executableName": "ply-visualizer",
+    "executableName": "plyviz",
     "artifactName": "ply-visualizer-${version}-${os}-${arch}.${ext}",
     "directories": {
       "output": "release",
@@ -63,6 +66,18 @@
           ]
         },
         {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "rpm",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
           "target": "tar.gz",
           "arch": [
             "x64"
@@ -79,7 +94,10 @@
         "model/obj",
         "model/gltf-binary",
         "model/gltf+json"
-      ]
+      ],
+      "maintainer": "deivse <deivse@users.noreply.github.com>",
+      "vendor": "deivse",
+      "synopsis": "Point cloud and mesh viewer with solo and groups"
     },
     "win": {
       "target": [
@@ -116,6 +134,15 @@
       "identity": null,
       "hardenedRuntime": false,
       "artifactName": "ply-visualizer-${version}-macos-${arch}.${ext}"
+    },
+    "deb": {
+      "artifactName": "ply-visualizer-${version}-linux-${arch}.${ext}"
+    },
+    "rpm": {
+      "artifactName": "ply-visualizer-${version}-linux-${arch}.${ext}"
+    },
+    "extraMetadata": {
+      "name": "ply-visualizer"
     }
   },
   "devDependencies": {

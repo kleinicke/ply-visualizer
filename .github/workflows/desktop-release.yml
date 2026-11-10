@@ -54,6 +54,10 @@ jobs:
             exit 1
           fi
 
+      - name: Install rpm tooling
+        if: matrix.name == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y rpm
+
       - name: Install engine dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund
 
@@ -78,6 +82,8 @@ jobs:
           if-no-files-found: error
           path: |
             apps/electron/release/*.AppImage
+            apps/electron/release/*.deb
+            apps/electron/release/*.rpm
             apps/electron/release/*.tar.gz
             apps/electron/release/*.exe
             apps/electron/release/*.zip
@@ -112,7 +118,7 @@ jobs:
 
             | Platform | Download |
             | --- | --- |
-            | Linux (x64) | `.AppImage` (run directly) or `.tar.gz` |
+            | Linux (x64) | `.AppImage` (run directly), `.deb` (Debian/Ubuntu), `.rpm` (Fedora/openSUSE) or `.tar.gz` |
             | Windows (x64) | `-setup.exe` installer or portable `.zip` |
             | macOS (Apple Silicon / Intel) | `.dmg` (`arm64` / `x64`) or `.zip` |
 
@@ -121,6 +127,8 @@ jobs:
               Applications, run `xattr -cr "/Applications/PLY Visualizer.app"`, or
               right-click it → Open.
             - **Windows** SmartScreen may warn: choose *More info → Run anyway*.
-            - **Linux**: `chmod +x` the AppImage, then run it.
+            - **Linux**: `chmod +x` the AppImage, then run it; or install the package
+              (`sudo apt install ./ply-visualizer-*.deb`, `sudo dnf install ./ply-visualizer-*.rpm`),
+              which adds `plyviz` to the PATH and a desktop entry.
 
             `SHA256SUMS.txt` lists the checksums of all files.
