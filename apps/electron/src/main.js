@@ -696,6 +696,6 @@ app.on('open-file', (event, filePath) => {
   if (app.isReady()) void openPaths(focusedWindow(), [filePath], { replace: false });
 });
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
-});
+// Closing the last window quits, on macOS too: a viewer with no window open
+// has nothing to show, and lingering in the Dock only holds memory.
+app.on('window-all-closed', () => app.quit());
