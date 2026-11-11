@@ -161,9 +161,6 @@
         onclick={() => trigger(action, selected)}>{action.label}</button
       >
     {/each}
-    <span class="fa-spacer"></span>
-    <button class="fa-btn" title="Select every listed file" onclick={selectAllListed}>All</button>
-    <button class="fa-btn" title="Clear the selection" onclick={clearSelection}>✕</button>
   </div>
 {/if}
 {#if fileActionUi.form?.action === 'subsample' && formTargets.length}
@@ -245,9 +242,6 @@
     font-weight: 600;
     margin-left: 3px;
     margin-right: 6px;
-  }
-  .fa-spacer {
-    flex: 1;
   }
   .fa-btn {
     font: inherit;

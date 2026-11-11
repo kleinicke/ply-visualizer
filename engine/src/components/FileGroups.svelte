@@ -4,6 +4,7 @@
   import { filesState } from '../state/files.svelte';
   import { fileGroupsState } from '../state/fileGroups.svelte';
   import { soloState, soloLayout } from '../state/solo.svelte';
+  import { fileSelection, selectAllListed, clearSelection } from '../state/fileSelection.svelte';
   import { compileGroupRegex, groupRegexPresets, NO_MATCH } from '../utils/regexGroups';
 
   let { host }: { host: FileListHost } = $props();
@@ -293,13 +294,26 @@
     {/if}
   {/if}
 
-  <div class="file-list-collapse-row">
+  <div class="file-list-collapse-row" data-no-scene-render>
     <button class="flt-btn" title="Collapse all objects" onclick={() => setAllCollapsed(true)}
       >▶ Collapse all</button
     >
     <button class="flt-btn" title="Expand all objects" onclick={() => setAllCollapsed(false)}
       >▼ Expand all</button
     >
+    <span class="flt-spacer"></span>
+    <!-- Kept together: when the panel is narrow they wrap as a pair. -->
+    <span class="flt-group">
+      <button class="flt-btn" title="Select every listed file" onclick={selectAllListed}
+        >Select all</button
+      >
+      <button
+        class="flt-btn"
+        title="Clear the selection"
+        disabled={!fileSelection.ids.length}
+        onclick={clearSelection}>Clear selection</button
+      >
+    </span>
   </div>
 {/if}
 
@@ -318,6 +332,7 @@
   }
   .file-list-collapse-row {
     display: flex;
+    flex-wrap: wrap;
     gap: 6px;
     padding: 6px 0 8px;
     margin-bottom: 4px;
@@ -334,7 +349,15 @@
     cursor: pointer;
     white-space: nowrap;
   }
-  .flt-btn:hover {
+  .flt-group {
+    display: flex;
+    gap: 6px;
+  }
+  .flt-btn:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+  .flt-btn:hover:not(:disabled) {
     background: var(--vscode-list-hoverBackground);
   }
   .flt-btn.on {
