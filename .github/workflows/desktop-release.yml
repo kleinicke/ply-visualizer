@@ -5,12 +5,15 @@ name: Desktop release
 #
 #   git tag desktop-v0.1.0 && git push fork desktop-v0.1.0
 #
-# The tag must match apps/electron/package.json's version. Running the
-# workflow by hand builds the packages as workflow artifacts without a release.
+# The tag must match apps/electron/package.json's version. A test build
+# (no release; the packages are the run's workflow artifacts) comes from
+# running the workflow by hand or from a desktop-test-* tag:
+#
+#   git tag desktop-test-0.1.4-1 && git push fork desktop-test-0.1.4-1
 
 on:
   push:
-    tags: ['desktop-v*']
+    tags: ['desktop-v*', 'desktop-test-*']
   workflow_dispatch:
 
 permissions:
