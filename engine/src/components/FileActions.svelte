@@ -3,9 +3,11 @@
   import type { FileListHost } from './fileListTypes';
   import type { FileEntry } from '../state/fileEntries';
   import { filesState } from '../state/files.svelte';
+  import Modal from './Modal.svelte';
   import {
     fileSelection,
     fileActionUi,
+    fileBusy,
     clearSelection,
     selectAllListed,
   } from '../state/fileSelection.svelte';
@@ -20,8 +22,9 @@
   const menuEntries = $derived(
     (filesState.entries, fileActionUi.menu ? entriesOf(fileActionUi.menu.ids) : []),
   );
+  // Entries a running action is working on are left out of every action.
   const applicable = (action: FileAction, entries: FileEntry[]) =>
-    entries.filter((e) => action.appliesTo(e, host));
+    entries.filter((e) => !(e.id in fileBusy.byId) && action.appliesTo(e, host));
   const targets = (action: FileAction) => applicable(action, selected);
 
   function trigger(action: FileAction, entries: FileEntry[]) {
@@ -97,10 +100,10 @@
   }
 
   function formKey(event: KeyboardEvent) {
-    // Keep the viewer's shortcuts (digits, arrows) out of the inputs.
-    event.stopPropagation();
-    if (event.key === 'Enter') applySubsample();
-    if (event.key === 'Escape') fileActionUi.form = null;
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      applySubsample();
+    }
   }
 
   // A form whose files are all gone (removed, or in another group) closes.
@@ -145,7 +148,7 @@
 </script>
 
 {#if selected.length}
-  <div class="file-actions-bar" role="toolbar" aria-label="Actions for selected files">
+  <div class="file-actions-bar" role="toolbar" aria-label="Actions for selected files" data-no-scene-render>
     <span class="fa-count">{selected.length} selected</span>
     {#each fileActions as action (action.id)}
       {@const n = targets(action).length}
@@ -164,38 +167,40 @@
   </div>
 {/if}
 {#if fileActionUi.form?.action === 'subsample' && formTargets.length}
-  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-  <div
-    class="fa-form"
-    class:standalone={!selected.length}
-    onkeydown={formKey}
-    role="group"
-    aria-label="Subsample"
-  >
-    <div class="fa-form-title">
-      Subsample {formTargets.length === 1
+  <Modal
+    title={`Subsample ${
+      formTargets.length === 1
         ? (formTargets[0].spatial?.data.fileName ?? '1 cloud')
-        : `${formTargets.length} clouds`}
+        : `${formTargets.length} clouds`
+    }`}
+    onclose={() => (fileActionUi.form = null)}
+  >
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="ss-form" onkeydown={formKey}>
+      <label><input type="radio" bind:group={mode} value="percent" /> Keep
+        <input type="number" min="0.01" max="99.99" step="any" bind:value={percent} disabled={mode !== 'percent'} /> % of points</label>
+      <label><input type="radio" bind:group={mode} value="max" /> Keep at most
+        <input type="number" min="1" step="100000" bind:value={maxPoints} disabled={mode !== 'max'} /> points per file</label>
+      <p class="ss-result">{fmt(formBefore)} → {fmt(formAfter)} points</p>
+      <p class="ss-hint">
+        Each cloud keeps a random subset of its points, and the rest are freed. Reopen the file to
+        get them back.
+      </p>
     </div>
-    <label><input type="radio" bind:group={mode} value="percent" /> Keep
-      <input type="number" min="0.01" max="99.99" step="any" bind:value={percent} disabled={mode !== 'percent'} /> % of points</label>
-    <label><input type="radio" bind:group={mode} value="max" /> At most
-      <input type="number" min="1" step="100000" bind:value={maxPoints} disabled={mode !== 'max'} /> points per file</label>
-    <div class="fa-hint">
-      {fmt(formBefore)} → {fmt(formAfter)} points. The dropped points are gone until you reopen the
-      file.
-    </div>
-    <div class="fa-form-buttons">
-      <button class="fa-btn" onclick={() => (fileActionUi.form = null)}>Cancel</button>
-      <button class="fa-btn primary" disabled={!formOptions || formAfter >= formBefore} onclick={applySubsample}>Subsample</button>
-    </div>
-  </div>
+    {#snippet footer()}
+      <button class="ss-btn" onclick={() => (fileActionUi.form = null)}>Cancel</button>
+      <button class="ss-btn primary" disabled={!formOptions || formAfter >= formBefore} onclick={applySubsample}
+        >Subsample</button
+      >
+    {/snippet}
+  </Modal>
 {/if}
 
 {#if fileActionUi.menu && menuEntries.length}
   <div
     class="file-context-menu"
     role="menu"
+    data-no-scene-render
     use:portal
     style="left: {fileActionUi.menu.x}px; top: {fileActionUi.menu.y}px;"
   >
@@ -262,8 +267,7 @@
     opacity: 0.45;
     cursor: default;
   }
-  .fa-btn.on,
-  .fa-btn.primary:not(:disabled) {
+  .fa-btn.on {
     background: var(--vscode-button-background);
     color: var(--vscode-button-foreground);
     border-color: var(--vscode-button-background);
@@ -271,48 +275,56 @@
   .fa-btn.danger:not(:disabled):hover {
     border-color: #c74e39;
   }
-  .fa-form {
+  .ss-form {
     display: grid;
-    gap: 6px;
-    padding: 0 0 8px;
-    margin-bottom: 8px;
-    border-bottom: 1px solid var(--vscode-sideBar-border, rgba(127, 127, 127, 0.3));
-    font-size: 11px;
+    gap: 10px;
   }
-  .fa-form label {
+  .ss-form label {
     display: flex;
     align-items: center;
-    gap: 5px;
+    gap: 8px;
     flex-wrap: wrap;
+    cursor: pointer;
   }
-  .fa-form input[type='number'] {
-    width: 7em;
+  .ss-form input[type='number'] {
+    width: 8em;
     font: inherit;
-    padding: 1px 4px;
+    padding: 3px 6px;
     background: var(--vscode-input-background);
     color: var(--vscode-input-foreground);
     border: 1px solid var(--vscode-input-border, #555);
-    border-radius: 2px;
+    border-radius: 3px;
   }
-  .fa-form input[type='number']:disabled {
+  .ss-form input[type='number']:disabled {
     opacity: 0.5;
   }
-  .fa-form.standalone {
-    padding-top: 4px;
+  .ss-result {
+    margin: 2px 0 0;
+    padding: 8px 10px;
+    border-radius: 4px;
+    background: var(--vscode-sideBar-background, rgba(255, 255, 255, 0.04));
+    border: 1px solid var(--vscode-sideBar-border, #444);
   }
-  .fa-form-title {
-    font-weight: 600;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+  .ss-hint {
+    margin: 0;
+    color: var(--vscode-descriptionForeground, #999);
   }
-  .fa-hint {
-    color: var(--vscode-descriptionForeground);
+  .ss-btn {
+    padding: 5px 14px;
+    border-radius: 3px;
+    font: inherit;
+    cursor: pointer;
+    border: 1px solid var(--vscode-button-border, transparent);
+    background: var(--vscode-button-secondaryBackground, #3a3d41);
+    color: var(--vscode-button-secondaryForeground, #fff);
   }
-  .fa-form-buttons {
-    display: flex;
-    justify-content: flex-end;
-    gap: 6px;
+  .ss-btn.primary {
+    background: var(--vscode-button-background, #0e639c);
+    color: var(--vscode-button-foreground, #fff);
+  }
+  .ss-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
   }
   :global(.file-context-menu) {
     position: fixed;

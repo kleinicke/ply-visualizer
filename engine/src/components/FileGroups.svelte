@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Modal from './Modal.svelte';
   import type { FileListHost } from './fileListTypes';
   import { filesState } from '../state/files.svelte';
   import { fileGroupsState } from '../state/fileGroups.svelte';
@@ -122,21 +123,14 @@
 
   function onWindowPointerDown(event: PointerEvent) {
     const target = event.target as HTMLElement;
-    if (helpOpen && !target.closest('.group-help, .group-help-btn')) {
-      helpOpen = false;
-    }
     if (menuOpen && !target.closest('.group-menu, .group-recent')) {
       closeMenu(false);
     }
-  }
-  function onWindowKeydown(event: KeyboardEvent) {
-    if (helpOpen && event.key === 'Escape') helpOpen = false;
   }
 </script>
 
 <svelte:window
   onpointerdown={onWindowPointerDown}
-  onkeydown={onWindowKeydown}
   onresize={() => menuOpen && placeMenu()}
 />
 
@@ -167,7 +161,8 @@
   </div>
 
   {#if helpOpen}
-    <div class="group-help" role="dialog" aria-label="How grouping works">
+    <Modal title="How grouping works" width={520} onclose={() => (helpOpen = false)}>
+    <div class="group-help">
       <p>
         <b>Group</b> splits the open files into groups and shows <b>one group at a time</b> — in
         the 3D view, this list and the solo panel. Switch groups with <kbd>←</kbd> <kbd>→</kbd>
@@ -198,6 +193,7 @@
       </p>
       <p class="muted">Each file's own visibility checkbox is kept and comes back when grouping is turned off.</p>
     </div>
+    </Modal>
   {/if}
 
   {#if fileGroupsState.enabled}
@@ -354,30 +350,24 @@
     font-weight: 700;
   }
   .group-help {
-    margin-bottom: 8px;
-    padding: 8px 10px;
-    border: 1px solid var(--vscode-focusBorder, #0078d4);
-    border-radius: 5px;
-    background: var(--vscode-editorWidget-background, var(--vscode-sideBar-background));
-    font-size: 11px;
-    line-height: 1.45;
+    line-height: 1.5;
     user-select: text;
   }
   .group-help p {
-    margin: 0 0 6px;
+    margin: 0 0 10px;
   }
   .group-help table {
     border-collapse: collapse;
-    margin: 0 0 6px;
+    margin: 0 0 10px;
   }
   .group-help td {
-    padding: 1px 8px 1px 0;
+    padding: 2px 12px 2px 0;
     vertical-align: top;
   }
   .group-help code,
   .group-help kbd {
     font-family: var(--vscode-editor-font-family, monospace);
-    font-size: 10.5px;
+    font-size: 12px;
     background: rgba(127, 127, 127, 0.18);
     border-radius: 3px;
     padding: 0 3px;

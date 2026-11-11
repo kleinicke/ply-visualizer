@@ -2,10 +2,10 @@
 
 > **This is a fork of
 > [kleinicke/ply-visualizer](https://github.com/kleinicke/ply-visualizer),
-> produced with Claude.** It aims to be
-> primarily a **standalone desktop app** (Linux, Windows, macOS) built on the
-> original's viewer engine, rather than a VS Code extension. The original
-> project's README continues [below](#3d-visualizer).
+> produced with Claude.** It aims to be primarily a **standalone desktop app**
+> (Linux, Windows, macOS) built on the original's viewer engine, rather than a
+> VS Code extension. The original project's README continues
+> [below](#3d-visualizer).
 
 ![Solo panel and groups: one group shown, one method soloed](assets/desktop-solo-groups.png)
 
@@ -37,9 +37,10 @@
   to a random subset (fit into N% of RAM, N% of points, or at most N points per
   file), so many big clouds fit on a 16 GB laptop. A normal open warns when the
   files will not fit in free memory and offers subsampling.
-- **File actions**: click names to select files (Ctrl/Shift to add), then act on
-  the selection from the action bar or a right-click menu: Subsample (thin
-  loaded clouds to free memory), Solo, Show, Hide, Remove.
+- **File actions**: click cards to select files (Ctrl/Shift to add) and act on
+  the selection from the action bar, or right-click any card for its own menu:
+  Subsample (thin loaded clouds to free memory; runs in the background with the
+  cards locked), Solo, Show, Hide, Remove, Select all.
 - **Viewer UI**: the side panel resizes from its edges, the file list is no
   longer height-capped, and Collapse all / Expand all buttons sit under the
   group controls. UI drags never move the 3D view.

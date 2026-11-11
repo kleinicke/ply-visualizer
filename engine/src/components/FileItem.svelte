@@ -4,7 +4,7 @@
   import ModelAnimationPanel from './ModelAnimationPanel.svelte';
   import { filesState } from '../state/files.svelte';
   import { soloState } from '../state/solo.svelte';
-  import { fileSelection, clickSelect, openRowMenu } from '../state/fileSelection.svelte';
+  import { fileSelection, clickSelect, openRowMenu, fileBusy } from '../state/fileSelection.svelte';
   import { runWithFileActivity } from '../fileActivity';
   import { getPointCloudColorOptions } from '../colorOptions';
   import { ensureKeyboardModifierTracking, isShiftPressed } from '../keyboardModifiers';
@@ -158,6 +158,9 @@
   }
 
   const selected = $derived(fileSelection.ids.includes(row.entry.id));
+  // A long-running action (subsampling) is working on this entry: 0..1.
+  const busyProgress = $derived(fileBusy.byId[row.entry.id]);
+  const busy = $derived(busyProgress !== undefined);
 
   // Controls inside a card keep their own clicks and context menus.
   const INTERACTIVE =
@@ -166,6 +169,9 @@
   // Clicking the card (its name or any empty part) selects it for the file
   // actions: Ctrl/Cmd toggles, Shift extends. Visibility is the checkbox.
   function onCardClick(event: MouseEvent) {
+    if (busy) {
+      return;
+    }
     const target = event.target as Element | null;
     if (event.defaultPrevented || target?.closest(INTERACTIVE)) {
       return;
@@ -178,6 +184,10 @@
   }
 
   function onContextMenu(event: MouseEvent) {
+    if (busy) {
+      event.preventDefault();
+      return;
+    }
     const target = event.target as Element | null;
     if (target?.closest('input, textarea, select, [contenteditable]')) {
       return; // native menu (copy/paste) in text fields
@@ -599,6 +609,8 @@
   class="file-item"
   class:solo-hidden={hiddenBySolo}
   class:selected
+  class:busy
+  aria-busy={busy}
   role="group"
   onclick={onCardClick}
   oncontextmenu={onContextMenu}
@@ -606,7 +618,15 @@
   use:longPressFileReorder={{ host, entryId: row.entry.id }}
   style:touch-action={collapsed ? 'none' : undefined}
 >
+  {#if busy}
+    <div class="file-busy" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round((busyProgress ?? 0) * 100)}>
+      <span class="spinner spinner-inline"></span>
+      <span>Subsampling… {Math.round((busyProgress ?? 0) * 100)}%</span>
+      <span class="file-busy-bar"><span style="width: {(busyProgress ?? 0) * 100}%"></span></span>
+    </div>
+  {/if}
   <div
+    inert={busy}
     class="file-item-main"
     style="touch-action: none; user-select: none;"
     title="Click to select (Ctrl/Shift to add) · right-click for actions · hold to reorder"
@@ -657,7 +677,7 @@
       >✕</button
     >
   </div>
-  <div class="file-item-content" id={`file-content-${index}`} style="display: {collapsed ? 'none' : 'block'}">
+  <div inert={busy} class="file-item-content" id={`file-content-${index}`} style="display: {collapsed ? 'none' : 'block'}">
     {#if kind === 'pointcloud' && data}
       <div class="file-info">{data.vertexCount.toLocaleString()} vertices, {data.faceCount.toLocaleString()} faces{data.isGaussianSplat ? ' · 3DGS' : ''}</div>
 

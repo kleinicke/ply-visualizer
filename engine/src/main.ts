@@ -917,6 +917,12 @@ export class PointCloudVisualizer {
     // Global UI interaction listener - triggers render on any button/input change
     this.lifetime.listen(document, 'click', e => {
       const target = e.target as HTMLElement;
+      // UI that never changes the scene (file selection, its menus and
+      // dialogs) opts out: a render of many large clouds is a visible hitch.
+      // Its actions that do change the scene request their own render.
+      if (target.closest?.('[data-no-scene-render]')) {
+        return;
+      }
       if (
         target.tagName === 'BUTTON' ||
         target.classList.contains('btn') ||
@@ -3206,8 +3212,8 @@ export class PointCloudVisualizer {
   }
 
   /** Thins loaded point clouds to a random subset (file-list action). */
-  subsampleEntries(ids: readonly number[], options: SubsampleOptions): void {
-    subsampleLoadedEntries(this, ids, options);
+  subsampleEntries(ids: readonly number[], options: SubsampleOptions): Promise<unknown> {
+    return subsampleLoadedEntries(this, ids, options);
   }
 
   /** Used by the capture-place toggles, which move several entries at once. */

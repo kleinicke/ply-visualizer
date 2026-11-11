@@ -79,3 +79,7 @@ export function openRowMenu(id, x, y) {
   const ids = fileSelection.ids.includes(id) ? [...fileSelection.ids] : [id];
   fileActionUi.menu = { x, y, ids };
 }
+
+// Entries a long-running action is working on: id -> progress 0..1. Their
+// cards are locked and show the progress; actions skip them.
+export const fileBusy = $state(/** @type {{ byId: Record<number, number> }} */ ({ byId: {} }));

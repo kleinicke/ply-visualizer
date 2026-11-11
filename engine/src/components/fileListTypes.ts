@@ -53,7 +53,7 @@ export interface FileListHost extends FileItemHost {
   subsampleEntries(
     ids: readonly number[],
     options: import('../utils/subsample').SubsampleOptions
-  ): void;
+  ): Promise<unknown>;
   pendingLoadDetail: string;
   pendingLoadLabel: string | null;
   sequenceFiles: string[];

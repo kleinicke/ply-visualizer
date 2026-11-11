@@ -766,7 +766,7 @@ export async function handleBrowserFiles(
     if (spatialDataArray.length > 0) {
       if (options.subsample) {
         for (const data of spatialDataArray) {
-          const result = subsampleSpatialData(data, options.subsample);
+          const result = await subsampleSpatialData(data, options.subsample);
           console.log(
             result.subsampled
               ? `✂️ ${data.fileName}: kept ${result.kept.toLocaleString()} of ${result.of.toLocaleString()} points`

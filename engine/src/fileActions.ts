@@ -42,6 +42,7 @@ function setVisible(host: FileListHost, entries: FileEntry[], visible: boolean):
       }
     }
   }
+  host.requestRender();
 }
 
 export const fileActions: FileAction[] = [

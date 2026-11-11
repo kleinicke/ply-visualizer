@@ -518,6 +518,35 @@ button:focus-visible {
   opacity: 1;
 }
 
+/* A long-running action (subsampling) is working on this card: its controls
+   are inert and dimmed, with progress on top. */
+.file-item.busy > .file-item-main,
+.file-item.busy > .file-item-content {
+  opacity: 0.4;
+  filter: grayscale(1);
+}
+.file-busy {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  font-size: 11px;
+  color: var(--vscode-foreground);
+}
+.file-busy-bar {
+  flex: 1;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(127, 127, 127, 0.25);
+  overflow: hidden;
+}
+.file-busy-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--vscode-progressBar-background, #0e70c0);
+  transition: width 0.15s linear;
+}
+
 /* Selected for file actions: a bluer gray card. */
 .file-item.selected {
   background-color: color-mix(in srgb, var(--vscode-list-hoverBackground, #2a2d2e) 72%, #4a78b0);
