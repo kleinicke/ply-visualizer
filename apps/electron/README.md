@@ -38,6 +38,7 @@ launch; the release notes explain how to proceed).
 | Open Folder… `Ctrl+Shift+O`                             | Replace the scene with a folder (recursive) |
 | Open Recent                                             | Recent files and folders                    |
 | Add Files to Scene… `Ctrl+Alt+O` / Add Folder to Scene… | Add to the current scene                    |
+| Advanced Open ▸ Open/Add Files/Folder with Subsampling… | Load one file at a time, thinning each      |
 | Clear Scene, New Window, Close Window, Quit             |                                             |
 
 The command line (`plyviz a.ply b.ply`, `plyviz some/folder`), drag and drop
@@ -48,6 +49,29 @@ Files from an opened folder are named by their path relative to it
 (`kitchen/methodA.ply`, OS separator). If the folder has no files at its top
 level, a dialog offers to group by subfolder ("Don't ask again" remembers the
 answer); otherwise everything is shown.
+
+### Large files and memory (src/memory.js, engine/src/utils/subsample.ts)
+
+A normal open loads everything, but first estimates the memory it needs (point
+counts from PLY/PCD/LAS headers, ~60 bytes per loaded point) and warns when that
+exceeds 80% of the memory that is free (Linux `MemAvailable`; on macOS free +
+inactive + purgeable pages). The warning offers **Subsample…**, Load Anyway, or
+Cancel. Large drops (over 256 MB) are checked the same way.
+
+**Advanced Open** asks how to subsample: fit everything into N% of RAM, keep N%
+of each file's points, or keep at most N points per file, with a live estimate
+of the result. Files are then read, parsed and thinned one at a time (uniform
+random subset, original order, seeded by the file name), so only one full-size
+file is in memory at once. Meshes and Gaussian splats are loaded whole.
+
+## File actions (engine/src/fileActions.ts)
+
+Click a file's name to select it; Ctrl/Cmd-click toggles and Shift-click
+extends. The selection gets an action bar above the list, and right-clicking a
+row opens the same actions as a menu: **Subsample…** (keep N% or at most N
+points per file of the loaded clouds; the dropped points are freed until the
+file is reopened), **Solo**, **Show**, **Hide**, **Remove**. Each action runs on
+the selected files it applies to. Visibility is the checkbox.
 
 ## Group (engine/src/utils/regexGroups.ts)
 
@@ -82,6 +106,8 @@ differs. Hover any item for its full name. Layout is remembered.
 - `src/main.js` — windows, menus, folder scanning, recents, prompts, `app://`
   protocol (page + opened files only)
 - `src/preload.js` — minimal bridge (open-files, path separator, folder drops)
-- `src/desktop.js` — feeds opened files into the engine's browser file path
+- `src/desktop.js` — feeds opened files into the engine's browser file path; the
+  subsampling dialog and one-file-at-a-time loading
+- `src/memory.js` — free memory and load-size estimates
 - `scripts/build-web.mjs` — builds `engine/dist`, strips analytics and
   website-only links, injects `desktop.js`

@@ -518,6 +518,12 @@ button:focus-visible {
   opacity: 1;
 }
 
+/* Selected for file actions: a bluer gray card. */
+.file-item.selected {
+  background-color: color-mix(in srgb, var(--vscode-list-hoverBackground, #2a2d2e) 72%, #4a78b0);
+  border-color: color-mix(in srgb, var(--vscode-sideBar-border, #444) 50%, #4a78b0);
+}
+
 .file-item.solo-hidden > .file-item-main {
   opacity: 0.45;
 }

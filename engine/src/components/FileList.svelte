@@ -6,6 +6,8 @@
   import AllPointSizes from './AllPointSizes.svelte';
   import FileItem from './FileItem.svelte';
   import FileGroups from './FileGroups.svelte';
+  import FileActions from './FileActions.svelte';
+  import { setSelectionOrder } from '../state/fileSelection.svelte';
 
   let { host }: { host: FileListHost } = $props();
 
@@ -36,6 +38,10 @@
   const pendingLoadDetail = $derived((filesState.entries, host.pendingLoadDetail));
 
   $effect(() => {
+    setSelectionOrder(entryRows.map((row) => row.entry.id));
+  });
+
+  $effect(() => {
     filesState.entries;
     totalEntries;
     addTooltipsToTruncatedFilenames();
@@ -57,6 +63,7 @@
   <div class="no-files">No objects loaded</div>
 {:else}
   <FileGroups {host} />
+  <FileActions {host} />
   {#each entryRows as row (row.entry.id)}
     <FileItem
       {host}

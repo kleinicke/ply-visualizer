@@ -33,6 +33,13 @@
 - **Folders as groups**: opening a folder names files by their path inside it,
   so grouping by subfolder is just the `^([^/]+)/` pattern (OS separator); a
   folder with no files at its top level offers exactly that.
+- **Large files**: File ▸ Advanced Open loads files one at a time and thins each
+  to a random subset (fit into N% of RAM, N% of points, or at most N points per
+  file), so many big clouds fit on a 16 GB laptop. A normal open warns when the
+  files will not fit in free memory and offers subsampling.
+- **File actions**: click names to select files (Ctrl/Shift to add), then act on
+  the selection from the action bar or a right-click menu: Subsample (thin
+  loaded clouds to free memory), Solo, Show, Hide, Remove.
 - **Viewer UI**: the side panel resizes from its edges, the file list is no
   longer height-capped, and Collapse all / Expand all buttons sit under the
   group controls. UI drags never move the 3D view.

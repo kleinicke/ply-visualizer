@@ -49,6 +49,11 @@ export interface FileItemHost {
 }
 export interface FileListHost extends FileItemHost {
   setFileEntryVisibility(index: number, visible: boolean): void;
+  /** Thins loaded point clouds in place (see subsampleLoaded.ts). */
+  subsampleEntries(
+    ids: readonly number[],
+    options: import('../utils/subsample').SubsampleOptions
+  ): void;
   pendingLoadDetail: string;
   pendingLoadLabel: string | null;
   sequenceFiles: string[];

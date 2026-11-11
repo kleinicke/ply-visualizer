@@ -12,6 +12,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { pathToFileURL } = require('node:url');
 const crypto = require('node:crypto');
+const memory = require('./memory');
 
 const WEB_ROOT = path.join(__dirname, '..', 'web');
 const SUPPORTED = new Set([
@@ -232,8 +233,12 @@ async function askFolderGrouping(win, folder, count) {
   return choice;
 }
 
-/** Opens files/folders in `win`: replacing its scene or adding to it. */
-async function openPaths(win, paths, { replace }) {
+/**
+ * Opens files/folders in `win`: replacing its scene or adding to it.
+ * `subsample` asks for load-time subsampling first (File > Advanced Open);
+ * a normal open warns when the files likely do not fit in free memory.
+ */
+async function openPaths(win, paths, { replace, subsample = false }) {
   const resolved = paths.map(p => path.resolve(p));
   const { items, folder } = collect(resolved);
   if (!items.length) {
@@ -261,7 +266,20 @@ async function openPaths(win, paths, { replace }) {
     : items.length === 1
       ? items[0].name
       : `${items[0].name} +${items.length - 1}`;
+
+  const estimate = memory.estimateFiles(items.map(item => item.abs));
+  let subsampleOptions;
+  if (!subsample) {
+    const choice = await warnIfTooLarge(win, estimate, items.length);
+    if (choice === 'cancel') return;
+    subsample = choice === 'subsample';
+  }
+  if (subsample) {
+    subsampleOptions = await askSubsample(win, estimate, { replace });
+    if (!subsampleOptions) return;
+  }
   deliver(win, {
+    subsample: subsampleOptions,
     files: items.map(item => {
       const token = crypto.randomUUID();
       openedFiles.set(token, item.abs);
@@ -271,6 +289,71 @@ async function openPaths(win, paths, { replace }) {
     title,
     replace,
   });
+}
+
+/** Share of available memory a normal open may take before it warns. */
+const WARN_SHARE = 0.8;
+
+async function warnIfTooLarge(win, estimate, count) {
+  const { available, total } = memory.memoryInfo();
+  if (estimate.fullLoadMemory <= available * WARN_SHARE) return 'load';
+  const exact = estimate.files.every(f => f.exact);
+  const { response } = await dialog.showMessageBox(win, {
+    type: 'warning',
+    title: 'Large files',
+    message: 'These files may not fit in memory.',
+    detail:
+      `${count} file${count === 1 ? '' : 's'}, ${memory.formatBytes(estimate.bytes)} on disk, ` +
+      `${exact ? '' : 'about '}${memory.formatPoints(estimate.points)} points.\n` +
+      `Loading everything needs about ${memory.formatBytes(estimate.fullLoadMemory)}; ` +
+      `${memory.formatBytes(available)} of ${memory.formatBytes(total)} is free now.\n\n` +
+      'Subsampling loads the files one at a time and keeps only part of each.',
+    buttons: ['Subsample…', 'Load Anyway', 'Cancel'],
+    defaultId: 0,
+    cancelId: 2,
+    noLink: true,
+  });
+  return ['subsample', 'load', 'cancel'][response];
+}
+
+/** Resolves once the window's page can take requests. */
+function windowReady(win) {
+  const state = windowState.get(win);
+  if (state.ready) return Promise.resolve();
+  return new Promise(resolve => state.readyWaiters.push(resolve));
+}
+
+let askSeq = 0;
+/** id -> { resolve, contents } for subsample dialogs open in a page. */
+const pendingAsks = new Map();
+
+/** Shows the subsampling dialog in the page; resolves to options or null. */
+async function askSubsample(win, estimate, { replace }) {
+  await windowReady(win);
+  if (win.isDestroyed()) return null;
+  const id = ++askSeq;
+  return new Promise(resolve => {
+    pendingAsks.set(id, { resolve, contents: win.webContents });
+    win.webContents.send('ask-subsample', {
+      id,
+      replace,
+      count: estimate.files.length,
+      bytes: estimate.bytes,
+      points: estimate.files.map(f => f.points),
+      exact: estimate.files.every(f => f.exact),
+      bytesPerPoint: memory.BYTES_PER_POINT,
+      ...memory.memoryInfo(),
+    });
+  });
+}
+
+function cancelAsks(contents) {
+  for (const [id, ask] of pendingAsks) {
+    if (ask.contents === contents) {
+      pendingAsks.delete(id);
+      ask.resolve(null);
+    }
+  }
 }
 
 // ---- windows ---------------------------------------------------------------
@@ -304,12 +387,14 @@ function deliver(win, payload) {
 const focusedWindow = () =>
   BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? createWindow([]);
 
-async function pick(win, kind, replace) {
+async function pick(win, kind, replace, subsample = false) {
   const folder = kind === 'folder';
   const result = await dialog.showOpenDialog(win, {
-    title: replace
-      ? `Open ${folder ? 'Folder' : 'Files'} (replaces the scene)`
-      : `Add ${folder ? 'Folder' : 'Files'} to Scene`,
+    title: subsample
+      ? `${replace ? 'Open' : 'Add'} ${folder ? 'Folder' : 'Files'} with Subsampling`
+      : replace
+        ? `Open ${folder ? 'Folder' : 'Files'} (replaces the scene)`
+        : `Add ${folder ? 'Folder' : 'Files'} to Scene`,
     properties: folder ? ['openDirectory'] : ['openFile', 'multiSelections'],
     filters: folder
       ? undefined
@@ -319,7 +404,7 @@ async function pick(win, kind, replace) {
         ],
   });
   if (!result.canceled && result.filePaths.length) {
-    await openPaths(win, result.filePaths, { replace });
+    await openPaths(win, result.filePaths, { replace, subsample });
   }
 }
 
@@ -386,6 +471,28 @@ function buildMenu() {
           click: () => pick(focusedWindow(), 'files', false),
         },
         { label: 'Add Fol&der to Scene…', click: () => pick(focusedWindow(), 'folder', false) },
+        {
+          label: 'Ad&vanced Open',
+          submenu: [
+            {
+              label: 'Open Files with &Subsampling…',
+              click: () => pick(focusedWindow(), 'files', true, true),
+            },
+            {
+              label: 'Open &Folder with Subsampling…',
+              click: () => pick(focusedWindow(), 'folder', true, true),
+            },
+            { type: 'separator' },
+            {
+              label: '&Add Files with Subsampling…',
+              click: () => pick(focusedWindow(), 'files', false, true),
+            },
+            {
+              label: 'Add Fol&der with Subsampling…',
+              click: () => pick(focusedWindow(), 'folder', false, true),
+            },
+          ],
+        },
         { type: 'separator' },
         { label: '&Clear Scene', click: () => clearScene(focusedWindow()) },
         { type: 'separator' },
@@ -482,10 +589,13 @@ function createWindow(initialPaths) {
       if (/^https?:/.test(url)) shell.openExternal(url);
     }
   });
-  windowState.set(win, { ready: false, queued: [], soloPanelVisible: true });
+  windowState.set(win, { ready: false, queued: [], readyWaiters: [], soloPanelVisible: true });
+  const contents = win.webContents;
+  win.on('closed', () => cancelAsks(contents));
   win.on('focus', syncSoloPanelMenuItem);
   win.webContents.on('did-start-loading', () => {
     windowState.get(win).ready = false;
+    cancelAsks(win.webContents);
   });
   win.loadURL('app://web/index.html');
   if (initialPaths.length) {
@@ -499,6 +609,7 @@ ipcMain.on('renderer-ready', event => {
   const state = win && windowState.get(win);
   if (!state) return;
   state.ready = true;
+  for (const resolve of state.readyWaiters.splice(0)) resolve();
   const queued = state.queued;
   state.queued = [];
   for (const payload of queued) win.webContents.send('open-files', payload);
@@ -512,6 +623,25 @@ ipcMain.on('drop-paths', (event, paths) => {
       { replace: false }
     );
   }
+});
+ipcMain.on('subsample-answer', (event, answer) => {
+  const ask = pendingAsks.get(answer?.id);
+  if (!ask || ask.contents !== event.sender) return;
+  pendingAsks.delete(answer.id);
+  const o = answer.options;
+  const valid =
+    o &&
+    typeof o === 'object' &&
+    ((typeof o.fraction === 'number' && o.fraction > 0 && o.fraction <= 1) ||
+      (typeof o.maxPoints === 'number' && o.maxPoints >= 1));
+  ask.resolve(
+    valid
+      ? {
+          ...(typeof o.fraction === 'number' ? { fraction: o.fraction } : {}),
+          ...(typeof o.maxPoints === 'number' ? { maxPoints: Math.floor(o.maxPoints) } : {}),
+        }
+      : null
+  );
 });
 ipcMain.on('solo-panel-visibility', (event, visible) => {
   const win = BrowserWindow.fromWebContents(event.sender);

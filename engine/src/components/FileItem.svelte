@@ -4,6 +4,7 @@
   import ModelAnimationPanel from './ModelAnimationPanel.svelte';
   import { filesState } from '../state/files.svelte';
   import { soloState } from '../state/solo.svelte';
+  import { fileSelection, clickSelect, selectOnly, fileActionUi } from '../state/fileSelection.svelte';
   import { runWithFileActivity } from '../fileActivity';
   import { getPointCloudColorOptions } from '../colorOptions';
   import { ensureKeyboardModifierTracking, isShiftPressed } from '../keyboardModifiers';
@@ -154,6 +155,23 @@
       return;
     }
     host.toggleFileVisibility(index);
+  }
+
+  const selected = $derived(fileSelection.ids.includes(row.entry.id));
+
+  // Clicking a name selects (Ctrl/Cmd toggles, Shift extends) for the file
+  // actions; visibility is the checkbox.
+  function onNameClick(event: MouseEvent) {
+    event.preventDefault();
+    clickSelect(row.entry.id, { toggle: event.ctrlKey || event.metaKey, range: event.shiftKey });
+  }
+
+  function onContextMenu(event: MouseEvent) {
+    event.preventDefault();
+    if (!fileSelection.ids.includes(row.entry.id)) {
+      selectOnly(row.entry.id);
+    }
+    fileActionUi.menu = { x: event.clientX, y: event.clientY };
   }
 
   function onRemove() {
@@ -566,6 +584,7 @@
 <div
   class="file-item"
   class:solo-hidden={hiddenBySolo}
+  class:selected
   data-entry-id={row.entry.id}
   use:longPressFileReorder={{ host, entryId: row.entry.id }}
   style:touch-action={collapsed ? 'none' : undefined}
@@ -573,7 +592,9 @@
   <div
     class="file-item-main"
     style="touch-action: none; user-select: none;"
-    title="Hold to reorder"
+    title="Click name to select (Ctrl/Shift to add) · right-click for actions · hold to reorder"
+    role="group"
+    oncontextmenu={onContextMenu}
   >
     <button
       class="collapse-toggle"
@@ -603,7 +624,21 @@
       >
     {/if}
     <span class="color-indicator" style={colorIndicatorStyle()}></span>
-    <label for={`file-${index}`} class="file-name" data-short-path={shortPath}>{name}</label>
+    <span
+      class="file-name"
+      role="button"
+      tabindex="0"
+      aria-pressed={selected}
+      data-short-path={shortPath}
+      onclick={onNameClick}
+      onkeydown={(event: KeyboardEvent) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          event.stopPropagation();
+          clickSelect(row.entry.id, { toggle: event.ctrlKey || event.metaKey, range: event.shiftKey });
+        }
+      }}>{name}</span
+    >
     <button class="remove-file" data-file-index={index} title={removeTitle} onclick={onRemove}
       >✕</button
     >

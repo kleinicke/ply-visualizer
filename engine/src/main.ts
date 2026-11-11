@@ -128,6 +128,8 @@ import * as depthCameraParamsPrompt from './depthCameraParamsPrompt';
 import * as formatDataHandlers from './formatDataHandlers';
 import * as transformDialogs from './transformDialogs';
 import * as browserFileDragDrop from './browserFileDragDrop';
+import { subsampleLoadedEntries } from './subsampleLoaded';
+import type { SubsampleOptions } from './utils/subsample';
 import * as liveDepthUpdate from './depth/liveDepthUpdate';
 import * as normalsVisualizer from './normalsVisualizer';
 import * as depthConversionPipeline from './depth/depthConversionPipeline';
@@ -2856,8 +2858,11 @@ export class PointCloudVisualizer {
     await browserFileDragDrop.handleDroppedFiles(this, files);
   }
 
-  private async handleBrowserFiles(files: File[]): Promise<void> {
-    await browserFileDragDrop.handleBrowserFiles(this, files);
+  private async handleBrowserFiles(
+    files: File[],
+    options?: browserFileDragDrop.BrowserLoadOptions
+  ): Promise<void> {
+    await browserFileDragDrop.handleBrowserFiles(this, files, options);
   }
 
   // # VSCode changes: the functions above are used in the browser and were not used for the extension
@@ -3198,6 +3203,11 @@ export class PointCloudVisualizer {
     }
     const desiredVisible = checkboxEl ? !!checkboxEl.checked : !(entry.state.visible ?? true);
     this.setFileEntryVisibility(fileIndex, desiredVisible);
+  }
+
+  /** Thins loaded point clouds to a random subset (file-list action). */
+  subsampleEntries(ids: readonly number[], options: SubsampleOptions): void {
+    subsampleLoadedEntries(this, ids, options);
   }
 
   /** Used by the capture-place toggles, which move several entries at once. */
