@@ -105,6 +105,9 @@
 
   function onHeaderPointerDown(event: PointerEvent) {
     if ((event.target as HTMLElement).closest('button')) return;
+    // No text selection or native drag of the header's text (the group name):
+    // on macOS a native drag started here can leave the window ignoring clicks.
+    event.preventDefault();
     const startX = event.clientX;
     const startY = event.clientY;
     const origin = { ...rect };
@@ -293,6 +296,8 @@
     overflow: hidden;
   }
   .solo-header {
+    user-select: none;
+    -webkit-user-select: none;
     display: flex;
     align-items: center;
     gap: 2px;
