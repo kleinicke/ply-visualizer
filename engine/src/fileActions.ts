@@ -60,22 +60,6 @@ export const fileActions: FileAction[] = [
       ),
   },
   {
-    id: 'solo',
-    label: 'Solo',
-    title: 'Show only these',
-    appliesTo: (entry, host) => entry.parentId === null && !!host.solo,
-    run: (host, entries) => {
-      const [first, ...rest] = entries;
-      if (!first) {
-        return;
-      }
-      host.solo.soloExclusive(first.id);
-      for (const entry of rest) {
-        host.solo.toggleAdditive(entry.id);
-      }
-    },
-  },
-  {
     id: 'show',
     label: 'Show',
     title: 'Make visible',

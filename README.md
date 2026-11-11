@@ -40,7 +40,7 @@
 - **File actions**: click cards to select files (Ctrl/Shift to add) and act on
   the selection from the action bar, or right-click any card for its own menu:
   Subsample (thin loaded clouds to free memory; runs in the background with the
-  cards locked), Solo, Show, Hide, Remove, Select all.
+  cards locked), Show, Hide, Remove, Select all.
 - **Viewer UI**: the side panel resizes from its edges, the file list is no
   longer height-capped, and Collapse all / Expand all buttons sit under the
   group controls. UI drags never move the 3D view.

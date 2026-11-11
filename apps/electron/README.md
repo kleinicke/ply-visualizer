@@ -81,11 +81,10 @@ Click a file's card (its name or any empty part of it) to select it;
 Ctrl/Cmd-click toggles and Shift-click extends. The selection gets an action bar
 above the list: **Subsample…** (keep N% or at most N points per file of the
 loaded clouds; the dropped points are freed until the file is reopened),
-**Solo**, **Show**, **Hide**, **Remove**. Right-clicking anywhere on a card
-opens the same actions for that card alone (or for the selection, when the card
-is part of it) without changing the selection, plus Select all / Clear
-selection. Each action runs on the files it applies to. Visibility is the
-checkbox.
+**Show**, **Hide**, **Remove**. Right-clicking anywhere on a card opens the same
+actions for that card alone (or for the selection, when the card is part of it)
+without changing the selection, plus Select all / Clear selection. Each action
+runs on the files it applies to. Visibility is the checkbox.
 
 ## Group (engine/src/utils/regexGroups.ts)
 
