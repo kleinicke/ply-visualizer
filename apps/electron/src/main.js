@@ -296,8 +296,8 @@ const WARN_SHARE = 0.8;
 
 async function warnIfTooLarge(win, estimate, count) {
   const { available, total } = memory.memoryInfo();
-  if (estimate.fullLoadMemory <= available * WARN_SHARE) return 'load';
-  const exact = estimate.files.every(f => f.exact);
+  if (estimate.peak <= available * WARN_SHARE) return 'load';
+  const exact = estimate.exact;
   const { response } = await dialog.showMessageBox(win, {
     type: 'warning',
     title: 'Large files',
@@ -305,7 +305,8 @@ async function warnIfTooLarge(win, estimate, count) {
     detail:
       `${count} file${count === 1 ? '' : 's'}, ${memory.formatBytes(estimate.bytes)} on disk, ` +
       `${exact ? '' : 'about '}${memory.formatPoints(estimate.points)} points.\n` +
-      `Loading everything needs about ${memory.formatBytes(estimate.fullLoadMemory)}; ` +
+      `Loading everything needs at least ${memory.formatBytes(estimate.peak)} ` +
+      `(${memory.formatBytes(estimate.steady)} once loaded); ` +
       `${memory.formatBytes(available)} of ${memory.formatBytes(total)} is free now.\n\n` +
       'Subsampling loads the files one at a time and keeps only part of each.',
     buttons: ['Subsample…', 'Load Anyway', 'Cancel'],
@@ -337,11 +338,10 @@ async function askSubsample(win, estimate, { replace }) {
     win.webContents.send('ask-subsample', {
       id,
       replace,
-      count: estimate.files.length,
       bytes: estimate.bytes,
-      points: estimate.files.map(f => f.points),
-      exact: estimate.files.every(f => f.exact),
-      bytesPerPoint: memory.BYTES_PER_POINT,
+      exact: estimate.exact,
+      // Per-file costs; the page plans with loadBudget.js, as here.
+      files: estimate.files,
       ...memory.memoryInfo(),
     });
   });

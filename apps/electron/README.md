@@ -50,13 +50,24 @@ Files from an opened folder are named by their path relative to it
 level, a dialog offers to group by subfolder ("Don't ask again" remembers the
 answer); otherwise everything is shown.
 
-### Large files and memory (src/memory.js, engine/src/utils/subsample.ts)
+### Large files and memory (src/loadBudget.js, src/memory.js)
 
-A normal open loads everything, but first estimates the memory it needs (point
-counts from PLY/PCD/LAS headers, ~60 bytes per loaded point) and warns when that
-exceeds 80% of the memory that is free (Linux `MemAvailable`; on macOS free +
-inactive + purgeable pages). The warning offers **Subsample…**, Load Anyway, or
-Cancel. Large drops (over 256 MB) are checked the same way.
+The memory a load takes is computed from each file's header with the rules the
+loading code applies: which properties become which arrays, at what width, what
+is uploaded to the GPU and what is kept only on the CPU, what stays in wasm
+memory, and what exists only while a file loads. Per point, for example:
+positions 12 B (+12 GPU), RGB 3 (+3 GPU), normals 6 (packed snorm16, CPU only),
+intensity 4, each other property 1–4 by its declared type, a 3DGS file's whole
+record (kept for splat mode). PLY, PCD, LAS/LAZ, XYZ/PTS/text, NPY and KITTI
+have exact layouts; other formats get a positions-only lower bound. Measured on
+Linux the page grows by exactly the computed bytes (within 5%) plus a fixed ~44
+MB; the GPU figures are what is uploaded, a lower bound (drivers may keep more).
+
+A normal open loads everything, but warns when its peak (all files' bytes are
+held at once while they parse) exceeds 80% of the memory that is free (Linux
+`MemAvailable`; on macOS free + inactive + purgeable pages). The warning offers
+**Subsample…**, Load Anyway, or Cancel. Large drops (over 256 MB) are checked
+the same way.
 
 **Advanced Open** asks how to subsample: fit everything into N% of RAM, keep N%
 of each file's points, or keep at most N points per file, with a live estimate
@@ -108,6 +119,7 @@ differs. Hover any item for its full name. Layout is remembered.
 - `src/preload.js` — minimal bridge (open-files, path separator, folder drops)
 - `src/desktop.js` — feeds opened files into the engine's browser file path; the
   subsampling dialog and one-file-at-a-time loading
-- `src/memory.js` — free memory and load-size estimates
+- `src/memory.js` — free memory; reads file headers into load costs
+- `src/loadBudget.js` — the memory formula (shared with the page)
 - `scripts/build-web.mjs` — builds `engine/dist`, strips analytics and
   website-only links, injects `desktop.js`

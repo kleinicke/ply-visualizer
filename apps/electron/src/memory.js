@@ -1,17 +1,10 @@
-// Memory budget for opening files: what the system can spare, and roughly
-// what a set of files will take once loaded.
+// Memory budget for opening files: what the system can spare, and what a set
+// of files will take (costs from headers, rules in loadBudget.js).
 const fs = require('node:fs');
 const os = require('node:os');
+const path = require('node:path');
 const { execFileSync } = require('node:child_process');
-
-/**
- * Bytes the viewer holds per loaded point (positions + colors in the page,
- * the GPU copy, bookkeeping). Measured: 20M xyz+rgb points take ~1.2 GB.
- * On Apple silicon the GPU copy is in the same RAM, so it counts too.
- */
-const BYTES_PER_POINT = 60;
-/** On-disk bytes per point when a file's header gives no count (binary xyz+rgb). */
-const FALLBACK_BYTES_PER_POINT_ON_DISK = 15;
+const budget = require('./loadBudget');
 
 /** Memory the OS can give us without swapping, in bytes. */
 function availableMemory() {
@@ -50,63 +43,136 @@ function readHead(file, length = 65536) {
   }
 }
 
-/** Point count from the file header (PLY, PCD, LAS/LAZ), or null. */
-function headerPointCount(file) {
-  const lower = file.toLowerCase();
-  try {
-    if (lower.endsWith('.ply') || lower.endsWith('.pcd')) {
-      const head = readHead(file).toString('latin1');
-      const match = lower.endsWith('.ply')
-        ? /^element\s+vertex\s+(\d+)/m.exec(head)
-        : /^POINTS\s+(\d+)/m.exec(head);
-      // A PLY with faces is a mesh; its vertex count still describes memory.
-      return match ? Number(match[1]) : null;
-    }
-    if (lower.endsWith('.las') || lower.endsWith('.laz')) {
-      const head = readHead(file, 375);
-      if (head.toString('latin1', 0, 4) !== 'LASF') return null;
-      const minor = head[25];
-      const legacy = head.readUInt32LE(107);
-      if (minor >= 4 && head.length >= 255) {
-        const full = Number(head.readBigUInt64LE(247));
-        if (full > 0) return full;
-      }
-      return legacy;
-    }
-  } catch {
-    // unreadable header: estimate from size
+/** Reads the start of a PLY up to `end_header` (headers can be long). */
+function readPlyHeader(file) {
+  for (const length of [65536, 1 << 20]) {
+    const text = readHead(file, length).toString('latin1');
+    const header = budget.parsePlyHeader(text);
+    if (header) return header;
+    if (text.length < length) break;
   }
   return null;
 }
 
+/** LAS/LAZ point count and point format, or null. */
+function lasInfo(file) {
+  const head = readHead(file, 375);
+  if (head.length < 111 || head.toString('latin1', 0, 4) !== 'LASF') return null;
+  // Bits 6-7 of the format byte flag LAZ compression.
+  const format = head[104] & 0x3f;
+  let points = head.readUInt32LE(107);
+  if (head[25] >= 4 && head.length >= 255) {
+    const full = Number(head.readBigUInt64LE(247));
+    if (full > 0) points = full;
+  }
+  return { format, points };
+}
+
+/** NPY point count (product of the shape / 3), or null if not N x 3. */
+function npyPoints(file) {
+  const head = readHead(file, 4096);
+  if (head.toString('latin1', 1, 6) !== 'NUMPY') return null;
+  const major = head[6];
+  const len = major === 1 ? head.readUInt16LE(8) : head.readUInt32LE(8);
+  const dict = head.toString('latin1', major === 1 ? 10 : 12, (major === 1 ? 10 : 12) + len);
+  const shape = /'shape':\s*\(([^)]*)\)/.exec(dict);
+  if (!shape) return null;
+  const dims = shape[1]
+    .split(',')
+    .map(x => x.trim())
+    .filter(Boolean)
+    .map(Number);
+  if (!dims.length || dims[dims.length - 1] !== 3) return null;
+  return dims.reduce((a, b) => a * b, 1) / 3;
+}
+
 /**
- * Per-file sizes and point counts (exact from headers when possible), and the
- * memory a full load is expected to take.
+ * Text point clouds: the first data row's column count, and points estimated
+ * from the lines in the first megabyte.
  */
-function estimateFiles(paths) {
-  const files = paths.map(file => {
-    let size = 0;
-    try {
-      size = fs.statSync(file).size;
-    } catch {
-      // vanished: counts as empty
+function textInfo(file, size) {
+  const head = readHead(file, 1 << 20);
+  const text = head.toString('latin1');
+  let lines = 0;
+  let columns = 0;
+  for (const line of text.split('\n')) {
+    lines++;
+    if (!columns) {
+      const numbers = line
+        .trim()
+        .split(/[\s,;]+/)
+        .filter(t => t && !Number.isNaN(Number(t)));
+      if (numbers.length >= 3) columns = numbers.length;
     }
-    const counted = headerPointCount(file);
-    return {
-      size,
-      points: counted ?? Math.round(size / FALLBACK_BYTES_PER_POINT_ON_DISK),
-      exact: counted !== null,
-    };
-  });
-  const bytes = files.reduce((sum, f) => sum + f.size, 0);
-  const points = files.reduce((sum, f) => sum + f.points, 0);
+  }
+  const points = head.length ? Math.round((lines / head.length) * size) : 0;
+  return { columns, points };
+}
+
+/**
+ * The memory cost of one file, from its header (rules in loadBudget.js).
+ * Formats whose layout is not read get the positions-only lower bound.
+ */
+function fileCost(file) {
+  let size = 0;
+  try {
+    size = fs.statSync(file).size;
+  } catch {
+    return { ...budget.minimalCost(0, 0, false), size: 0 };
+  }
+  const ext = path.extname(file).toLowerCase();
+  try {
+    if (ext === '.ply') {
+      const header = readPlyHeader(file);
+      if (header) return { ...budget.plyCost(header, size), size };
+    } else if (ext === '.pcd') {
+      const header = budget.parsePcdHeader(readHead(file).toString('latin1'));
+      if (header) return { ...budget.pcdCost(header, size), size };
+    } else if (ext === '.las' || ext === '.laz') {
+      const info = lasInfo(file);
+      if (info) return { ...budget.lasCost(info, size), size };
+    } else if (['.xyz', '.xyzn', '.xyzrgb', '.pts', '.txt', '.csv', '.asc', '.tsv'].includes(ext)) {
+      const { columns, points } = textInfo(file, size);
+      return { ...budget.textCost(ext, columns, points, size), size };
+    } else if (ext === '.npy') {
+      const points = npyPoints(file);
+      if (points !== null) {
+        // Positions only; the file and a Float32 copy pass through wasm.
+        return {
+          ...budget.pointCost(points, size, { wasm: size + points * 12, describe: 'xyz' }),
+          size,
+        };
+      }
+    } else if (ext === '.bin' && size % 16 === 0) {
+      // KITTI: x y z intensity as float32.
+      return {
+        ...budget.pointCost(size / 16, size, {
+          intensity: true,
+          wasm: 0,
+          describe: 'xyz + intensity',
+        }),
+        size,
+      };
+    }
+  } catch {
+    // unreadable header: fall through
+  }
+  // Unknown layout (E57, meshes, models): positions only, 12 bytes per point
+  // on disk - a rough lower bound.
+  return { ...budget.minimalCost(Math.round(size / 12), size, false), size };
+}
+
+/** Costs of `paths`, and what loading all of them normally takes. */
+function estimateFiles(paths) {
+  const files = paths.map(fileCost);
+  const plan = budget.planLoad(files, null);
   return {
     files,
-    bytes,
-    points,
-    // A normal open reads every file before parsing any, so the raw bytes
-    // are held on top of the parsed points.
-    fullLoadMemory: points * BYTES_PER_POINT + bytes,
+    bytes: files.reduce((sum, f) => sum + f.size, 0),
+    points: files.reduce((sum, f) => sum + f.points, 0),
+    exact: files.every(f => f.exact),
+    steady: plan.steady,
+    peak: plan.peak,
   };
 }
 
@@ -126,7 +192,6 @@ function formatPoints(points) {
 }
 
 module.exports = {
-  BYTES_PER_POINT,
   availableMemory,
   estimateFiles,
   memoryInfo,

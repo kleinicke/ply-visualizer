@@ -27,12 +27,23 @@
     bridge.setTitle(titles.length ? `${titles[0]}${extra} — PLY Visualizer` : 'PLY Visualizer');
   }
 
-  async function readFile(file) {
-    const response = await fetch(file.url);
-    if (!response.ok) {
-      throw new Error(`Could not read ${file.name}`);
-    }
-    return new File([await response.blob()], file.name);
+  // A File-like object whose bytes are fetched when the page asks for them.
+  // A real File would need a Blob, which Chromium copies into its blob
+  // storage (spilling large ones to disk) on top of the page's own copy.
+  function readFile(file) {
+    return {
+      name: file.name,
+      size: file.size,
+      type: '',
+      webkitRelativePath: '',
+      async arrayBuffer() {
+        const response = await fetch(file.url);
+        if (!response.ok) {
+          throw new Error(`Could not read ${file.name}`);
+        }
+        return response.arrayBuffer();
+      },
+    };
   }
 
   // Subsampled loading reads, parses and thins one file at a time, so only
@@ -41,7 +52,7 @@
     for (let i = 0; i < files.length; i++) {
       bridge.setTitle(`Loading ${i + 1}/${files.length}… — PLY Visualizer`);
       try {
-        await viewer.handleBrowserFiles([await readFile(files[i])], { subsample });
+        await viewer.handleBrowserFiles([readFile(files[i])], { subsample });
       } catch (error) {
         console.error(error);
         viewer.showError?.(`Failed to load ${files[i].name}: ${error?.message ?? error}`);
@@ -68,8 +79,7 @@
         if (payload.subsample) {
           await loadSubsampled(viewer, payload.files, payload.subsample);
         } else {
-          const objects = await Promise.all(payload.files.map(readFile));
-          await viewer.handleBrowserFiles(objects);
+          await viewer.handleBrowserFiles(payload.files.map(readFile));
         }
         if (payload.title) titles.push(payload.title);
         updateTitle();
@@ -175,16 +185,30 @@
   function showSubsampleDialog(request) {
     styleDialog();
     const prefs = loadPrefs();
-    const totalPoints = request.points.reduce((a, b) => a + b, 0);
+    const plan = window.plyLoadBudget;
+    const files = request.files;
+    const count = files.length;
+    const totalPoints = files.reduce((sum, f) => sum + f.points, 0);
     const approx = request.exact ? '' : '~';
+    const full = plan.planLoad(files, null);
+    // Layouts present, e.g. "xyz + rgb ×12 · 3DGS ×2 (kept whole)".
+    const layouts = new Map();
+    for (const f of files) layouts.set(f.describe, (layouts.get(f.describe) || 0) + 1);
+    const whole = files.filter(f => !f.subsamplable).length;
+    const layoutText = [...layouts]
+      .map(([name, n]) => (n > 1 ? `${name} ×${n}` : name))
+      .join(' · ');
     const backdrop = document.createElement('div');
     backdrop.className = 'subsample-backdrop';
     backdrop.innerHTML = `
       <div class="subsample-dialog" role="dialog" aria-modal="true" aria-labelledby="subsample-title">
         <h2 id="subsample-title">${request.replace ? 'Open' : 'Add'} with subsampling</h2>
         <p class="facts muted">
-          ${request.count} file${request.count === 1 ? '' : 's'} · ${formatBytes(request.bytes)} on disk ·
-          ${approx}${formatPoints(totalPoints)} points (≈ ${formatBytes(totalPoints * request.bytesPerPoint)} fully loaded)<br>
+          ${count} file${count === 1 ? '' : 's'} · ${formatBytes(request.bytes)} on disk ·
+          ${approx}${formatPoints(totalPoints)} points<br>
+          <span class="layouts"></span><br>
+          Loading all of it: at least ${formatBytes(full.peak)}
+          (${formatBytes(full.steady)} once loaded)<br>
           This computer: ${formatBytes(request.available)} free of ${formatBytes(request.total)}
         </p>
         <fieldset>
@@ -197,12 +221,15 @@
         </fieldset>
         <p class="result" aria-live="polite"></p>
         <p class="muted" style="margin:0 0 14px">Files load one at a time; each is thinned to a random
-          subset of its points right after it is read.</p>
+          subset of its points right after it is read.${
+            whole ? ` Meshes and Gaussian splats (${whole}) are loaded whole.` : ''
+          }</p>
         <div class="buttons">
           <button type="button" data-act="cancel">Cancel</button>
           <button type="button" class="primary" data-act="ok">${request.replace ? 'Open' : 'Add'}</button>
         </div>
       </div>`;
+    backdrop.querySelector('.layouts').textContent = layoutText;
     const inputs = Object.fromEntries(
       [...backdrop.querySelectorAll('input[type=number]')].map(input => [input.dataset.k, input])
     );
@@ -216,39 +243,34 @@
       const mode = radios.find(r => r.checked).value;
       const value = Number(inputs[mode].value);
       let options = null;
-      let kept = totalPoints;
+      let error = 'Enter a valid amount.';
       if (mode === 'fit' && value > 0 && value <= 95) {
-        const budget = (request.total * value) / 100;
-        const fraction = Math.min(1, budget / Math.max(1, totalPoints * request.bytesPerPoint));
-        options = { fraction };
-        kept = totalPoints * fraction;
+        const fraction = plan.fractionForBudget(files, (request.total * value) / 100);
+        if (fraction === null) error = `Even the smallest subset needs more than ${value}% of RAM.`;
+        else options = { fraction };
       } else if (mode === 'percent' && value > 0 && value <= 100) {
         options = { fraction: value / 100 };
-        kept = totalPoints * options.fraction;
       } else if (mode === 'max' && value >= 1) {
         options = { maxPoints: Math.floor(value) };
-        kept = request.points.reduce((sum, p) => sum + Math.min(p, options.maxPoints), 0);
       }
-      return { mode, value, options, kept };
+      return { mode, value, options, error, load: options && plan.planLoad(files, options) };
     }
 
     function update() {
       for (const radio of radios) inputs[radio.value].disabled = !radio.checked;
-      const { mode, options, kept } = current();
+      const { options, error, load } = current();
       okButton.disabled = !options;
       if (!options) {
-        result.textContent = 'Enter a valid amount.';
+        result.textContent = error;
         result.classList.remove('over');
         return;
       }
-      const memoryNeeded = kept * request.bytesPerPoint;
-      const share = totalPoints ? kept / totalPoints : 1;
-      const detail =
-        mode === 'fit'
-          ? `keeps ${share >= 1 ? 'all' : `${(share * 100).toFixed(share < 0.01 ? 2 : 1)}%`} of the points`
-          : `${(share * 100).toFixed(share < 0.01 ? 2 : 1)}% of all points`;
-      result.textContent = `Result: ${approx}${formatPoints(kept)} points, ≈ ${formatBytes(memoryNeeded)} (${detail})`;
-      const over = memoryNeeded > request.available * 0.8;
+      const share = totalPoints ? load.kept / totalPoints : 1;
+      const percent = share >= 1 ? 'all' : `${(share * 100).toFixed(share < 0.01 ? 2 : 1)}%`;
+      result.textContent =
+        `Result: ${approx}${formatPoints(load.kept)} points (${percent}), at least ` +
+        `${formatBytes(load.steady)} once loaded, ${formatBytes(load.peak)} at the peak`;
+      const over = load.peak > request.available * 0.8;
       result.classList.toggle('over', over);
       if (over) result.textContent += ' — more than is free now';
     }

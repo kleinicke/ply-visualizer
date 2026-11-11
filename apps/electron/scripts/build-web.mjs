@@ -44,11 +44,12 @@ strip(/\s*<div class="bottom-right-nav">[\s\S]*?<\/div>/, 'website footer links'
 html = html.replace(/<title>[^<]*<\/title>/, '<title>PLY Visualizer</title>');
 html = html.replace(
   '<script src="bundle.js"></script>',
-  '<script src="bundle.js"></script>\n    <script src="desktop.js"></script>'
+  '<script src="bundle.js"></script>\n    <script src="loadBudget.js"></script>\n    <script src="desktop.js"></script>'
 );
 if (!html.includes('desktop.js')) {
   throw new Error('build-web: could not inject desktop.js');
 }
 fs.writeFileSync(path.join(out, 'index.html'), html);
 fs.copyFileSync(path.join(appDir, 'src', 'desktop.js'), path.join(out, 'desktop.js'));
+fs.copyFileSync(path.join(appDir, 'src', 'loadBudget.js'), path.join(out, 'loadBudget.js'));
 console.log(`build-web: wrote ${out}`);
