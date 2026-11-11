@@ -553,6 +553,50 @@ button:focus-visible {
   border-color: color-mix(in srgb, var(--vscode-sideBar-border, #444) 50%, #4a78b0);
 }
 
+/* Hover where a click selects: the card itself, not the controls inside it
+   (same exclusions as FileItem's click handler). */
+.file-item {
+  transition: background-color 0.12s ease;
+}
+.file-item:not(.busy):hover:not(
+    :has(
+      :is(
+        button,
+        input,
+        select,
+        textarea,
+        a,
+        label,
+        summary,
+        [contenteditable],
+        [role='slider'],
+        [role='button']:not(.file-name),
+        [role='menuitem']
+      ):hover
+    )
+  ) {
+  background-color: color-mix(in srgb, var(--vscode-list-hoverBackground, #2a2d2e) 88%, #ffffff);
+}
+.file-item.selected:not(.busy):hover:not(
+    :has(
+      :is(
+        button,
+        input,
+        select,
+        textarea,
+        a,
+        label,
+        summary,
+        [contenteditable],
+        [role='slider'],
+        [role='button']:not(.file-name),
+        [role='menuitem']
+      ):hover
+    )
+  ) {
+  background-color: color-mix(in srgb, var(--vscode-list-hoverBackground, #2a2d2e) 64%, #4a78b0);
+}
+
 .file-item.solo-hidden > .file-item-main {
   opacity: 0.45;
 }
