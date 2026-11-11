@@ -114,16 +114,22 @@
     const move = (e: PointerEvent) => {
       rect = clampRect({ ...origin, x: origin.x + e.clientX - startX, y: origin.y + e.clientY - startY });
     };
+    let ended = false;
     const up = () => {
+      if (ended) return;
+      ended = true;
       header.removeEventListener('pointermove', move);
       header.removeEventListener('pointerup', up);
       header.removeEventListener('pointercancel', up);
+      header.removeEventListener('lostpointercapture', up);
       unmask();
       persistRect();
     };
     header.addEventListener('pointermove', move);
     header.addEventListener('pointerup', up);
     header.addEventListener('pointercancel', up);
+    // Capture can be lost without a pointerup (gestures, focus changes).
+    header.addEventListener('lostpointercapture', up);
   }
 
   function onResizePointerDown(event: PointerEvent) {
@@ -141,16 +147,22 @@
         h: origin.h + e.clientY - startY,
       });
     };
+    let ended = false;
     const up = () => {
+      if (ended) return;
+      ended = true;
       grip.removeEventListener('pointermove', move);
       grip.removeEventListener('pointerup', up);
       grip.removeEventListener('pointercancel', up);
+      grip.removeEventListener('lostpointercapture', up);
       unmask();
       persistRect();
     };
     grip.addEventListener('pointermove', move);
     grip.addEventListener('pointerup', up);
     grip.addEventListener('pointercancel', up);
+    // Capture can be lost without a pointerup (gestures, focus changes).
+    grip.addEventListener('lostpointercapture', up);
   }
 
   onMount(() => {

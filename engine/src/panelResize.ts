@@ -45,8 +45,13 @@ export function installPanelResize(lifetime: ViewerLifetime, panel: HTMLElement)
     const handle = document.createElement('div');
     handle.className = `panel-resize-handle panel-resize-${edge}`;
     handle.title = 'Drag to resize · double-click to reset';
+    handle.draggable = false;
     panel.appendChild(handle);
     handles.push(handle);
+    // Never start a native drag-and-drop or text selection from a handle: on
+    // macOS a stray one can leave the window ignoring clicks.
+    handle.addEventListener('dragstart', event => event.preventDefault());
+    handle.addEventListener('selectstart', event => event.preventDefault());
 
     handle.addEventListener('pointerdown', event => {
       event.preventDefault();
@@ -54,6 +59,8 @@ export function installPanelResize(lifetime: ViewerLifetime, panel: HTMLElement)
       handle.setPointerCapture(event.pointerId);
       const rect = panel.getBoundingClientRect();
       const unmask = maskPointerInput(getComputedStyle(handle).cursor);
+      const previousUserSelect = document.body.style.userSelect;
+      document.body.style.userSelect = 'none';
       const startX = event.clientX;
       const startY = event.clientY;
       const move = (e: PointerEvent) => {
@@ -67,16 +74,25 @@ export function installPanelResize(lifetime: ViewerLifetime, panel: HTMLElement)
         // offset and slide the point cloud while the panel is dragged.
         apply();
       };
+      let ended = false;
       const up = () => {
+        if (ended) {
+          return;
+        }
+        ended = true;
         handle.removeEventListener('pointermove', move);
         handle.removeEventListener('pointerup', up);
         handle.removeEventListener('pointercancel', up);
+        handle.removeEventListener('lostpointercapture', up);
+        document.body.style.userSelect = previousUserSelect;
         unmask();
         save();
       };
       handle.addEventListener('pointermove', move);
       handle.addEventListener('pointerup', up);
       handle.addEventListener('pointercancel', up);
+      // Capture can be lost without a pointerup (gestures, focus changes).
+      handle.addEventListener('lostpointercapture', up);
     });
     handle.addEventListener('dblclick', () => {
       if (edge !== 'bottom') {
