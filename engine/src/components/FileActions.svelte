@@ -12,23 +12,32 @@
 
   let { host }: { host: FileListHost } = $props();
 
-  const selected = $derived(
-    (filesState.entries,
-    fileSelection.ids
-      .map((id) => host.fileEntries.get(id))
-      .filter((entry): entry is FileEntry => !!entry)),
+  const entriesOf = (ids: readonly number[]) =>
+    ids.map((id) => host.fileEntries.get(id)).filter((entry): entry is FileEntry => !!entry);
+  const selected = $derived((filesState.entries, entriesOf(fileSelection.ids)));
+  // The right-click menu acts on its own entries (that row, or the selection
+  // when the row is part of it).
+  const menuEntries = $derived(
+    (filesState.entries, fileActionUi.menu ? entriesOf(fileActionUi.menu.ids) : []),
   );
-  const targets = (action: FileAction) => selected.filter((e) => action.appliesTo(e, host));
+  const applicable = (action: FileAction, entries: FileEntry[]) =>
+    entries.filter((e) => action.appliesTo(e, host));
+  const targets = (action: FileAction) => applicable(action, selected);
 
-  function trigger(action: FileAction) {
+  function trigger(action: FileAction, entries: FileEntry[]) {
     fileActionUi.menu = null;
-    const entries = targets(action);
-    if (!entries.length) return;
+    const usable = applicable(action, entries);
+    if (!usable.length) return;
     if (action.form) {
-      fileActionUi.form = action.id;
+      fileActionUi.form = { action: action.id, ids: usable.map((e) => e.id) };
       return;
     }
-    action.run(host, entries);
+    action.run(host, usable);
+  }
+
+  function menuSelect(select: () => void) {
+    fileActionUi.menu = null;
+    select();
   }
 
   // ---- subsample form ----
@@ -46,7 +55,12 @@
   let maxPoints = $state<number>(prefs.max);
 
   const subsampleAction = fileActions.find((a) => a.id === 'subsample')!;
-  const formTargets = $derived(fileActionUi.form === 'subsample' ? targets(subsampleAction) : []);
+  const formTargets = $derived(
+    (filesState.entries,
+    fileActionUi.form?.action === 'subsample'
+      ? applicable(subsampleAction, entriesOf(fileActionUi.form.ids))
+      : []),
+  );
   const formOptions = $derived(
     mode === 'percent'
       ? percent > 0 && percent < 100
@@ -89,10 +103,10 @@
     if (event.key === 'Escape') fileActionUi.form = null;
   }
 
+  // A form whose files are all gone (removed, or in another group) closes.
   $effect(() => {
-    if (!selected.length) {
+    if (fileActionUi.form && !formTargets.length) {
       fileActionUi.form = null;
-      fileActionUi.menu = null;
     }
   });
 
@@ -138,49 +152,74 @@
       <button
         class="fa-btn"
         class:danger={action.danger}
-        class:on={fileActionUi.form === action.id}
+        class:on={fileActionUi.form?.action === action.id}
         disabled={!n}
         title={n < selected.length && n ? `${action.title} (${n} of ${selected.length} apply)` : action.title}
-        onclick={() => trigger(action)}>{action.label}</button
+        onclick={() => trigger(action, selected)}>{action.label}</button
       >
     {/each}
     <span class="fa-spacer"></span>
     <button class="fa-btn" title="Select every listed file" onclick={selectAllListed}>All</button>
     <button class="fa-btn" title="Clear the selection" onclick={clearSelection}>✕</button>
   </div>
-  {#if fileActionUi.form === 'subsample'}
-    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-    <div class="fa-form" onkeydown={formKey} role="group" aria-label="Subsample">
-      <label><input type="radio" bind:group={mode} value="percent" /> Keep
-        <input type="number" min="0.01" max="99.99" step="any" bind:value={percent} disabled={mode !== 'percent'} /> % of points</label>
-      <label><input type="radio" bind:group={mode} value="max" /> At most
-        <input type="number" min="1" step="100000" bind:value={maxPoints} disabled={mode !== 'max'} /> points per file</label>
-      <div class="fa-hint">
-        {formTargets.length} cloud{formTargets.length === 1 ? '' : 's'}: {fmt(formBefore)} → {fmt(formAfter)} points.
-        The dropped points are gone until you reopen the file.
-      </div>
-      <div class="fa-form-buttons">
-        <button class="fa-btn" onclick={() => (fileActionUi.form = null)}>Cancel</button>
-        <button class="fa-btn primary" disabled={!formOptions || formAfter >= formBefore} onclick={applySubsample}>Subsample</button>
-      </div>
+{/if}
+{#if fileActionUi.form?.action === 'subsample' && formTargets.length}
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+  <div
+    class="fa-form"
+    class:standalone={!selected.length}
+    onkeydown={formKey}
+    role="group"
+    aria-label="Subsample"
+  >
+    <div class="fa-form-title">
+      Subsample {formTargets.length === 1
+        ? (formTargets[0].spatial?.data.fileName ?? '1 cloud')
+        : `${formTargets.length} clouds`}
     </div>
-  {/if}
+    <label><input type="radio" bind:group={mode} value="percent" /> Keep
+      <input type="number" min="0.01" max="99.99" step="any" bind:value={percent} disabled={mode !== 'percent'} /> % of points</label>
+    <label><input type="radio" bind:group={mode} value="max" /> At most
+      <input type="number" min="1" step="100000" bind:value={maxPoints} disabled={mode !== 'max'} /> points per file</label>
+    <div class="fa-hint">
+      {fmt(formBefore)} → {fmt(formAfter)} points. The dropped points are gone until you reopen the
+      file.
+    </div>
+    <div class="fa-form-buttons">
+      <button class="fa-btn" onclick={() => (fileActionUi.form = null)}>Cancel</button>
+      <button class="fa-btn primary" disabled={!formOptions || formAfter >= formBefore} onclick={applySubsample}>Subsample</button>
+    </div>
+  </div>
 {/if}
 
-{#if fileActionUi.menu && selected.length}
+{#if fileActionUi.menu && menuEntries.length}
   <div
     class="file-context-menu"
     role="menu"
     use:portal
     style="left: {fileActionUi.menu.x}px; top: {fileActionUi.menu.y}px;"
   >
-    <div class="fcm-head">{selected.length} selected</div>
+    <div class="fcm-head">
+      {menuEntries.length === 1
+        ? (menuEntries[0].spatial?.data.fileName ?? '1 item')
+        : `${menuEntries.length} selected`}
+    </div>
     {#each fileActions as action (action.id)}
-      {@const n = targets(action).length}
-      <button role="menuitem" class:danger={action.danger} disabled={!n} title={action.title} onclick={() => trigger(action)}
-        >{action.label}{#if n && n < selected.length}<span class="fcm-n">{n}</span>{/if}</button
+      {@const n = applicable(action, menuEntries).length}
+      <button
+        role="menuitem"
+        class:danger={action.danger}
+        disabled={!n}
+        title={action.title}
+        onclick={() => trigger(action, menuEntries)}
+        >{action.label}{#if n && n < menuEntries.length}<span class="fcm-n">{n}</span>{/if}</button
       >
     {/each}
+    <div class="fcm-sep" role="separator"></div>
+    <button role="menuitem" onclick={() => menuSelect(selectAllListed)}>Select all</button>
+    {#if selected.length}
+      <button role="menuitem" onclick={() => menuSelect(clearSelection)}>Clear selection</button>
+    {/if}
   </div>
 {/if}
 
@@ -258,6 +297,15 @@
   .fa-form input[type='number']:disabled {
     opacity: 0.5;
   }
+  .fa-form.standalone {
+    padding-top: 4px;
+  }
+  .fa-form-title {
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   .fa-hint {
     color: var(--vscode-descriptionForeground);
   }
@@ -308,6 +356,17 @@
   }
   :global(.file-context-menu button.danger:not(:disabled)) {
     color: #f48771;
+  }
+  :global(.file-context-menu .fcm-sep) {
+    height: 1px;
+    margin: 4px 0;
+    background: var(--vscode-menu-separatorBackground, rgba(127, 127, 127, 0.3));
+  }
+  :global(.file-context-menu .fcm-head) {
+    max-width: 280px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   :global(.file-context-menu .fcm-n) {
     opacity: 0.6;

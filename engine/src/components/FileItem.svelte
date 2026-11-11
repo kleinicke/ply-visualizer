@@ -4,7 +4,7 @@
   import ModelAnimationPanel from './ModelAnimationPanel.svelte';
   import { filesState } from '../state/files.svelte';
   import { soloState } from '../state/solo.svelte';
-  import { fileSelection, clickSelect, selectOnly, fileActionUi } from '../state/fileSelection.svelte';
+  import { fileSelection, clickSelect, openRowMenu } from '../state/fileSelection.svelte';
   import { runWithFileActivity } from '../fileActivity';
   import { getPointCloudColorOptions } from '../colorOptions';
   import { ensureKeyboardModifierTracking, isShiftPressed } from '../keyboardModifiers';
@@ -159,19 +159,31 @@
 
   const selected = $derived(fileSelection.ids.includes(row.entry.id));
 
-  // Clicking a name selects (Ctrl/Cmd toggles, Shift extends) for the file
-  // actions; visibility is the checkbox.
-  function onNameClick(event: MouseEvent) {
-    event.preventDefault();
+  // Controls inside a card keep their own clicks and context menus.
+  const INTERACTIVE =
+    'button, input, select, textarea, a, label, summary, [contenteditable], [role="slider"], [role="button"]:not(.file-name), [role="menuitem"]';
+
+  // Clicking the card (its name or any empty part) selects it for the file
+  // actions: Ctrl/Cmd toggles, Shift extends. Visibility is the checkbox.
+  function onCardClick(event: MouseEvent) {
+    const target = event.target as Element | null;
+    if (event.defaultPrevented || target?.closest(INTERACTIVE)) {
+      return;
+    }
+    // Leave text being selected (e.g. a file path) alone.
+    if (window.getSelection()?.toString()) {
+      return;
+    }
     clickSelect(row.entry.id, { toggle: event.ctrlKey || event.metaKey, range: event.shiftKey });
   }
 
   function onContextMenu(event: MouseEvent) {
-    event.preventDefault();
-    if (!fileSelection.ids.includes(row.entry.id)) {
-      selectOnly(row.entry.id);
+    const target = event.target as Element | null;
+    if (target?.closest('input, textarea, select, [contenteditable]')) {
+      return; // native menu (copy/paste) in text fields
     }
-    fileActionUi.menu = { x: event.clientX, y: event.clientY };
+    event.preventDefault();
+    openRowMenu(row.entry.id, event.clientX, event.clientY);
   }
 
   function onRemove() {
@@ -581,10 +593,15 @@
   );
 </script>
 
+<!-- Keyboard selection is on the focusable name (Enter/Space); the card adds a mouse target. -->
+<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
 <div
   class="file-item"
   class:solo-hidden={hiddenBySolo}
   class:selected
+  role="group"
+  onclick={onCardClick}
+  oncontextmenu={onContextMenu}
   data-entry-id={row.entry.id}
   use:longPressFileReorder={{ host, entryId: row.entry.id }}
   style:touch-action={collapsed ? 'none' : undefined}
@@ -592,9 +609,7 @@
   <div
     class="file-item-main"
     style="touch-action: none; user-select: none;"
-    title="Click name to select (Ctrl/Shift to add) · right-click for actions · hold to reorder"
-    role="group"
-    oncontextmenu={onContextMenu}
+    title="Click to select (Ctrl/Shift to add) · right-click for actions · hold to reorder"
   >
     <button
       class="collapse-toggle"
@@ -630,7 +645,6 @@
       tabindex="0"
       aria-pressed={selected}
       data-short-path={shortPath}
-      onclick={onNameClick}
       onkeydown={(event: KeyboardEvent) => {
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault();

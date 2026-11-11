@@ -59,10 +59,23 @@ export function selectOnly(id) {
 }
 
 // Action UI shared by the action bar and the right-click menu: the open
-// context menu's position, and the action whose parameter form is open.
+// context menu (where, and the entries its actions apply to), and the
+// parameter form that is open (which action, for which entries).
 export const fileActionUi = $state(
-  /** @type {{ menu: { x: number; y: number } | null; form: string | null }} */ ({
+  /** @type {{ menu: { x: number; y: number; ids: number[] } | null; form: { action: string; ids: number[] } | null }} */ ({
     menu: null,
     form: null,
   })
 );
+
+/**
+ * Right-click on a row: its actions apply to the selection when the row is
+ * part of it, otherwise to that row alone. The selection is not changed.
+ * @param {number} id
+ * @param {number} x
+ * @param {number} y
+ */
+export function openRowMenu(id, x, y) {
+  const ids = fileSelection.ids.includes(id) ? [...fileSelection.ids] : [id];
+  fileActionUi.menu = { x, y, ids };
+}
