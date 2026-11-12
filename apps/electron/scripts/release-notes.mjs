@@ -32,4 +32,31 @@ const template = fs
   .replaceAll('{{TAG}}', tag)
   .trim();
 
-process.stdout.write(`## What's new in ${version}\n\n${changes}\n\n---\n\n${template}\n`);
+/**
+ * GitHub shows every newline in release notes as a line break, so lines
+ * wrapped in the source files would break mid-sentence. Joins each
+ * paragraph's and list item's wrapped lines back into one.
+ */
+function unwrap(markdown) {
+  const out = [];
+  const startsBlock = line =>
+    line.trim() === '' || /^\s*(#|\||```|---|[-*+] |\d+\. )/.test(line);
+  for (const line of markdown.split('\n')) {
+    const previous = out[out.length - 1];
+    const joinable =
+      previous !== undefined &&
+      previous.trim() !== '' &&
+      !/^\s*(#|\||```|---$)/.test(previous) &&
+      !startsBlock(line);
+    if (joinable) {
+      out[out.length - 1] = `${previous} ${line.trim()}`;
+    } else {
+      out.push(line);
+    }
+  }
+  return out.join('\n');
+}
+
+process.stdout.write(
+  unwrap(`## What's new in ${version}\n\n${changes}\n\n---\n\n${template}`) + '\n'
+);
