@@ -152,9 +152,15 @@ const natural = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base
 /** Supported geometry under `root`, as paths relative to it, naturally sorted. */
 function scanFolder(root) {
   const found = [];
+  // Symlinks are followed (and keep their own names); real paths of the
+  // folders walked so far stop a link back up the tree from looping.
+  const visited = new Set();
   const walk = dir => {
     let entries;
     try {
+      const real = fs.realpathSync(dir);
+      if (visited.has(real)) return;
+      visited.add(real);
       entries = fs.readdirSync(dir, { withFileTypes: true });
     } catch {
       return;
@@ -163,9 +169,12 @@ function scanFolder(root) {
       if (found.length >= MAX_FOLDER_FILES) return;
       if (entry.name.startsWith('.')) continue;
       const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
+      const linked = entry.isSymbolicLink();
+      const directory = linked ? isDir(full) : entry.isDirectory();
+      const file = linked ? isFile(full) : entry.isFile();
+      if (directory) {
         if (entry.name !== 'node_modules') walk(full);
-      } else if (entry.isFile() && FOLDER_SCAN.has(extOf(entry.name))) {
+      } else if (file && FOLDER_SCAN.has(extOf(entry.name))) {
         found.push(path.relative(root, full));
       }
     }
