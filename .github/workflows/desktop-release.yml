@@ -1,0 +1,140 @@
+name: Desktop release
+
+# Builds the Electron desktop app (apps/electron) for Linux, Windows and macOS
+# and publishes a GitHub release with the installers.
+#
+#   git tag desktop-v0.1.0 && git push fork desktop-v0.1.0
+#
+# The tag must match apps/electron/package.json's version. A test build
+# (no release; the packages are the run's workflow artifacts) comes from
+# running the workflow by hand or from a desktop-test-* tag:
+#
+#   git tag desktop-test-0.1.4-1 && git push fork desktop-test-0.1.4-1
+
+on:
+  push:
+    tags: ['desktop-v*', 'desktop-test-*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux
+            os: ubuntu-latest
+            args: --linux
+          - name: windows
+            os: windows-latest
+            args: --win
+          - name: macos
+            os: macos-latest
+            args: --mac --x64 --arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            apps/electron/package-lock.json
+
+      - name: Check the tag matches the app version
+        if: startsWith(github.ref, 'refs/tags/desktop-v')
+        shell: bash
+        run: |
+          version=$(node -p "require('./apps/electron/package.json').version")
+          if [ "desktop-v$version" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match apps/electron version $version"
+            exit 1
+          fi
+
+      - name: Install rpm tooling
+        if: matrix.name == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y rpm
+
+      - name: Install engine dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Install desktop dependencies
+        working-directory: apps/electron
+        run: npm ci --no-audit --no-fund
+
+      - name: Build the viewer page
+        working-directory: apps/electron
+        run: node scripts/build-web.mjs
+
+      - name: Package
+        working-directory: apps/electron
+        env:
+          # No Apple developer ID: macOS builds are ad-hoc signed
+          # (mac.identity "-"), Windows builds are unsigned.
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npx electron-builder ${{ matrix.args }} --publish never
+
+      - name: Verify the macOS signature
+        if: matrix.name == 'macos'
+        shell: bash
+        run: |
+          # Ad-hoc signed (no Apple developer ID). An invalid signature makes
+          # macOS report the app as "damaged", so fail the build instead.
+          for app in release/mac*/*.app; do
+            echo "== $app"
+            codesign --verify --deep --strict --verbose=2 "$app"
+            codesign -dv "$app" 2>&1 | grep -E 'Identifier|Signature|Format'
+          done
+        working-directory: apps/electron
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.name }}
+          if-no-files-found: error
+          path: |
+            apps/electron/release/*.AppImage
+            apps/electron/release/*.deb
+            apps/electron/release/*.rpm
+            apps/electron/release/*.tar.gz
+            apps/electron/release/*.exe
+            apps/electron/release/*.zip
+            apps/electron/release/*.dmg
+
+  release:
+    name: Publish release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/desktop-v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
+
+      # The notes are this version's CHANGELOG.md section plus release-notes.md;
+      # desktop-release-notes.yml keeps them in sync when the changelog changes.
+      - uses: actions/checkout@v4
+        with:
+          path: src
+          sparse-checkout: apps/electron
+
+      - name: Release notes
+        run: node src/apps/electron/scripts/release-notes.mjs "${{ github.ref_name }}" > release-notes.md
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: PLY Visualizer Desktop ${{ github.ref_name }}
+          files: dist/*
+          body_path: release-notes.md

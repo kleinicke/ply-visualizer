@@ -1,0 +1,39 @@
+name: Desktop release notes
+
+# Rewrites the notes of every published desktop-v* release from
+# apps/electron/CHANGELOG.md and release-notes.md, so editing the changelog
+# on main also corrects releases already out.
+on:
+  push:
+    branches: [main]
+    paths:
+      - apps/electron/CHANGELOG.md
+      - apps/electron/release-notes.md
+      - apps/electron/scripts/release-notes.mjs
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: apps/electron
+
+      - name: Update release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release list --repo "$GITHUB_REPOSITORY" --limit 200 --json tagName --jq '.[].tagName' |
+            grep '^desktop-v' |
+            while read -r tag; do
+              if node apps/electron/scripts/release-notes.mjs "$tag" > notes.md; then
+                gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --notes-file notes.md
+                echo "updated $tag"
+              else
+                echo "::warning::no changelog section for $tag, left as is"
+              fi
+            done

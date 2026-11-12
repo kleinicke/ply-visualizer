@@ -128,6 +128,8 @@ import * as depthCameraParamsPrompt from './depthCameraParamsPrompt';
 import * as formatDataHandlers from './formatDataHandlers';
 import * as transformDialogs from './transformDialogs';
 import * as browserFileDragDrop from './browserFileDragDrop';
+import { subsampleLoadedEntries } from './subsampleLoaded';
+import type { SubsampleOptions } from './utils/subsample';
 import * as liveDepthUpdate from './depth/liveDepthUpdate';
 import * as normalsVisualizer from './normalsVisualizer';
 import * as depthConversionPipeline from './depth/depthConversionPipeline';
@@ -165,6 +167,9 @@ import {
   type VisibilityRenderContext,
 } from './rendering/WebGPUVisibilityRenderer';
 import { FileEntryRegistry } from './state/fileEntries';
+import { SoloController } from './soloMode';
+import { mountSoloBar } from './soloBarMount';
+import { installPanelResize } from './panelResize';
 import { insertEntryState } from './state/fileEntryState';
 import { viewerState } from './state/viewer.svelte';
 import { uiState } from './state/ui.svelte';
@@ -368,7 +373,10 @@ export class PointCloudVisualizer {
   // state/fileEntries.ts for why that derivation was unsafe.
   readonly fileEntries = new FileEntryRegistry(createEntryPresentation, entries => {
     filesState.entries = entries;
+    this.solo?.entriesChanged();
   });
+  /** DAW-style solo layered over each entry's own visibility; see soloMode.ts. */
+  readonly solo: SoloController = new SoloController(this);
   /** Image names of the loaded COLMAP model, for matching streamed photos. */
   private colmapImageNames: string[] = [];
   private colmapImagesDone = 0;
@@ -679,6 +687,7 @@ export class PointCloudVisualizer {
 
       const panel = document.getElementById('main-ui-panel');
       if (panel) {
+        installPanelResize(this.lifetime, panel);
         this.screenAnchor = new ScreenAnchorController({
           camera: this.camera,
           canvas: this.renderer.domElement,
@@ -908,6 +917,12 @@ export class PointCloudVisualizer {
     // Global UI interaction listener - triggers render on any button/input change
     this.lifetime.listen(document, 'click', e => {
       const target = e.target as HTMLElement;
+      // UI that never changes the scene (file selection, its menus and
+      // dialogs) opts out: a render of many large clouds is a visible hitch.
+      // Its actions that do change the scene request their own render.
+      if (target.closest?.('[data-no-scene-render]')) {
+        return;
+      }
       if (
         target.tagName === 'BUTTON' ||
         target.classList.contains('btn') ||
@@ -2032,6 +2047,8 @@ export class PointCloudVisualizer {
     // File list - Svelte component (components/FileList.svelte), see
     // updateFileList() and docs/SVELTE_MIGRATION_PLAN.md Phase 3.
     mountFileList(this.lifetime, this);
+    mountSoloBar(this.lifetime, this.solo, () => this.sequenceMode);
+    this.solo.installShortcuts();
     mountGlobalAlignMenu(this.lifetime, this);
     mountStats(this.lifetime, this);
     mountControlsTab(this.lifetime, this);
@@ -2186,6 +2203,7 @@ export class PointCloudVisualizer {
   }
 
   private initializeSequence(files: string[], wildcard: string): void {
+    this.solo.exit();
     sequencePlayback.initializeSequence(this, files, wildcard);
   }
 
@@ -2846,8 +2864,11 @@ export class PointCloudVisualizer {
     await browserFileDragDrop.handleDroppedFiles(this, files);
   }
 
-  private async handleBrowserFiles(files: File[]): Promise<void> {
-    await browserFileDragDrop.handleBrowserFiles(this, files);
+  private async handleBrowserFiles(
+    files: File[],
+    options?: browserFileDragDrop.BrowserLoadOptions
+  ): Promise<void> {
+    await browserFileDragDrop.handleBrowserFiles(this, files, options);
   }
 
   // # VSCode changes: the functions above are used in the browser and were not used for the extension
@@ -3176,10 +3197,23 @@ export class PointCloudVisualizer {
     }
     // Determine desired visibility from checkbox state
     const checkboxEl = document.getElementById(`file-${fileIndex}`) as HTMLInputElement | null;
-    const desiredVisible = checkboxEl
-      ? !!checkboxEl.checked
-      : !(this.fileEntries.require(fileIndex).state.visible ?? true);
+    const entry = this.fileEntries.require(fileIndex);
+    if (this.solo.layered) {
+      // While solo/scene layers are active the checkbox is the entry's own
+      // setting ("mute"), applied through the layers.
+      this.solo.setBaseVisible(
+        entry,
+        checkboxEl ? !!checkboxEl.checked : !this.solo.baseVisible(entry)
+      );
+      return;
+    }
+    const desiredVisible = checkboxEl ? !!checkboxEl.checked : !(entry.state.visible ?? true);
     this.setFileEntryVisibility(fileIndex, desiredVisible);
+  }
+
+  /** Thins loaded point clouds to a random subset (file-list action). */
+  subsampleEntries(ids: readonly number[], options: SubsampleOptions): Promise<unknown> {
+    return subsampleLoadedEntries(this, ids, options);
   }
 
   /** Used by the capture-place toggles, which move several entries at once. */
@@ -3683,22 +3717,12 @@ export class PointCloudVisualizer {
   }
 
   soloPointCloud(fileIndex: number): void {
-    const totalEntries = this.fileEntries.length;
-    const selectedIsSoleVisible =
-      this.fileEntries.require(fileIndex).state.visible &&
-      Array.from({ length: totalEntries }, (_, index) => index).every(
-        index => index === fileIndex || !this.fileEntries.require(index).state.visible
-      );
-    const showAll = selectedIsSoleVisible;
-
-    for (let i = 0; i < totalEntries; i++) {
-      this.setFileEntryVisibility(i, showAll || i === fileIndex);
+    // Shift-click on a row's checkbox: exclusive solo, which restores every
+    // entry's own visibility when it ends instead of showing everything.
+    const entry = this.fileEntries.at(fileIndex);
+    if (entry) {
+      this.solo.soloExclusive(entry.id);
     }
-
-    // Entry visibility is reactive, so rebuilding the complete file list
-    // here is unnecessary. Keeping the existing rows also preserves scroll,
-    // focus, expanded panels, and each row's identity during Shift-click solo.
-    this.requestRender();
   }
 
   private switchToTrackballControls(): void {

@@ -22,6 +22,7 @@ import {
 import { SPLAT_CONTAINER_REGEX } from './visualization/splatMode';
 import { isCameraProfileData } from './cameraProfile';
 import { filmState } from './state/film.svelte';
+import { subsampleSpatialData, type SubsampleOptions } from './utils/subsample';
 import type { FilmManager } from './film/FilmManager';
 
 declare const acquireVsCodeApi: () => any;
@@ -532,9 +533,15 @@ export async function loadExamplePointCloud(
   }
 }
 
+export interface BrowserLoadOptions {
+  /** Load-time subsampling of every point cloud in the batch. */
+  subsample?: SubsampleOptions;
+}
+
 export async function handleBrowserFiles(
   host: BrowserFileDragDropHost,
-  files: File[]
+  files: File[],
+  options: BrowserLoadOptions = {}
 ): Promise<void> {
   console.log(`🌐 Loading ${files.length} files in browser...`);
   host.showImmediateLoading({ fileName: `${files.length} files`, pointCount: 0 });
@@ -757,6 +764,16 @@ export async function handleBrowserFiles(
     }
 
     if (spatialDataArray.length > 0) {
+      if (options.subsample) {
+        for (const data of spatialDataArray) {
+          const result = await subsampleSpatialData(data, options.subsample);
+          console.log(
+            result.subsampled
+              ? `✂️ ${data.fileName}: kept ${result.kept.toLocaleString()} of ${result.of.toLocaleString()} points`
+              : `✂️ ${data.fileName}: not subsampled${result.reason ? ` (${result.reason})` : ''}`
+          );
+        }
+      }
       await host.displayFiles(spatialDataArray);
 
       // Attach the source to each newly added depth-derived file.

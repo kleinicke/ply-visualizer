@@ -184,12 +184,45 @@ body {
   border: 1px solid var(--vscode-sideBar-border);
   border-radius: 6px;
   width: 300px;
+  max-height: calc(100vh - 20px);
+  max-height: calc(100dvh - 20px);
   z-index: 100;
   font-size: 12px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   overflow: hidden;
   display: flex;
   flex-direction: column;
+}
+
+/* panelResize.ts: drag the left edge, bottom edge or bottom-left corner. */
+.panel-resize-handle {
+  position: absolute;
+  z-index: 5;
+}
+.panel-resize-left {
+  top: 0;
+  bottom: 10px;
+  left: 0;
+  width: 6px;
+  cursor: ew-resize;
+}
+.panel-resize-bottom {
+  left: 10px;
+  right: 0;
+  bottom: 0;
+  height: 6px;
+  cursor: ns-resize;
+}
+.panel-resize-corner {
+  left: 0;
+  bottom: 0;
+  width: 12px;
+  height: 12px;
+  cursor: nesw-resize;
+}
+.panel-resize-handle:hover {
+  background: var(--vscode-focusBorder, rgba(0, 120, 212, 0.5));
+  opacity: 0.5;
 }
 
 #measurement-quick-actions .quick-tooltip {
@@ -263,7 +296,6 @@ body {
 
 /* Tab Content */
 .tab-content {
-  max-height: 70vh;
   overflow-y: auto;
   overflow-x: hidden;
   flex: 1;
@@ -405,8 +437,6 @@ button:focus-visible {
 /* File List */
 #file-list {
   margin-bottom: 16px;
-  max-height: 300px;
-  overflow-y: auto;
 }
 
 .file-item {
@@ -458,6 +488,117 @@ button:focus-visible {
 .file-item input[type='checkbox'] {
   margin: 0;
   cursor: pointer;
+}
+
+/* DAW-style solo (soloMode.ts) */
+.solo-toggle {
+  flex-shrink: 0;
+  width: 18px;
+  height: 16px;
+  padding: 0;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 14px;
+  border-radius: 3px;
+  cursor: pointer;
+  color: var(--vscode-foreground);
+  background: transparent;
+  border: 1px solid var(--vscode-sideBar-border, #555);
+  opacity: 0.7;
+}
+
+.solo-toggle:hover {
+  opacity: 1;
+}
+
+.solo-toggle.lit {
+  background: #f5c518;
+  border-color: #f5c518;
+  color: #1a1a1a;
+  opacity: 1;
+}
+
+/* A long-running action (subsampling) is working on this card: its controls
+   are inert and dimmed, with progress on top. */
+.file-item.busy > .file-item-main,
+.file-item.busy > .file-item-content {
+  opacity: 0.4;
+  filter: grayscale(1);
+}
+.file-busy {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  font-size: 11px;
+  color: var(--vscode-foreground);
+}
+.file-busy-bar {
+  flex: 1;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(127, 127, 127, 0.25);
+  overflow: hidden;
+}
+.file-busy-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--vscode-progressBar-background, #0e70c0);
+  transition: width 0.15s linear;
+}
+
+/* Selected for file actions: a bluer gray card. */
+.file-item.selected {
+  background-color: color-mix(in srgb, var(--vscode-list-hoverBackground, #2a2d2e) 72%, #4a78b0);
+  border-color: color-mix(in srgb, var(--vscode-sideBar-border, #444) 50%, #4a78b0);
+}
+
+/* Hover where a click selects: the card itself, not the controls inside it
+   (same exclusions as FileItem's click handler). */
+.file-item {
+  transition: background-color 0.12s ease;
+}
+.file-item:not(.busy):hover:not(
+    :has(
+      :is(
+        button,
+        input,
+        select,
+        textarea,
+        a,
+        label,
+        summary,
+        [contenteditable],
+        [role='slider'],
+        [role='button']:not(.file-name),
+        [role='menuitem']
+      ):hover
+    )
+  ) {
+  background-color: color-mix(in srgb, var(--vscode-list-hoverBackground, #2a2d2e) 88%, #ffffff);
+}
+.file-item.selected:not(.busy):hover:not(
+    :has(
+      :is(
+        button,
+        input,
+        select,
+        textarea,
+        a,
+        label,
+        summary,
+        [contenteditable],
+        [role='slider'],
+        [role='button']:not(.file-name),
+        [role='menuitem']
+      ):hover
+    )
+  ) {
+  background-color: color-mix(in srgb, var(--vscode-list-hoverBackground, #2a2d2e) 64%, #4a78b0);
+}
+
+.file-item.solo-hidden > .file-item-main {
+  opacity: 0.45;
 }
 
 .color-indicator {

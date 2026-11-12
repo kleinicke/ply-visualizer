@@ -32,7 +32,23 @@
   // already agree - the normal case on load - leave it live.
   const active = $derived(inSync);
   const shownSize = $derived(inSync && cloudCount > 0 ? sizes[0] : 0);
-  const sliderMax = $derived(Math.max(0.05, shownSize * 2));
+  /**
+   * The per-file sliders' range (four times the recommended size, at least
+   * 0.1), taken for the cloud with the largest one. It must not follow the
+   * current size: a range of "twice the size" grew with every step of a drag,
+   * so the size compounded and ran off to points larger than the screen. It
+   * widens only to include a size typed beyond it.
+   */
+  const rangeMax = $derived(
+    (filesState.entries,
+    (host.spatialFiles ?? []).reduce((max: number, data: any) => {
+      const recommended = data?.metadata?.recommendedPointSize;
+      return typeof recommended === 'number' && recommended > 0
+        ? Math.max(max, recommended * 4)
+        : max;
+    }, 0.1)),
+  );
+  const sliderMax = $derived(Math.max(rangeMax, shownSize));
 
   function applyToAll(size: number) {
     if (!(size > 0)) {

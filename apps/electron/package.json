@@ -1,0 +1,168 @@
+{
+  "name": "ply-visualizer-electron",
+  "productName": "PLY Visualizer",
+  "version": "0.1.6",
+  "description": "Standalone desktop app for point clouds and meshes (fork of kleinicke/ply-visualizer) with DAW-style solo and groups",
+  "license": "MIT",
+  "author": {
+    "name": "deivse",
+    "email": "deivse@users.noreply.github.com"
+  },
+  "homepage": "https://github.com/deivse/ply-visualizer",
+  "main": "src/main.js",
+  "desktopName": "plyviz.desktop",
+  "private": true,
+  "scripts": {
+    "build:web": "node scripts/build-web.mjs",
+    "start": "electron .",
+    "dev": "node scripts/build-web.mjs && electron .",
+    "dist:linux": "node scripts/build-web.mjs && electron-builder --linux --publish never",
+    "dist:win": "node scripts/build-web.mjs && electron-builder --win --publish never",
+    "dist:mac": "node scripts/build-web.mjs && electron-builder --mac --x64 --arm64 --publish never"
+  },
+  "build": {
+    "appId": "de.f-kleinicke.ply-visualizer.desktop",
+    "productName": "PLY Visualizer",
+    "executableName": "plyviz",
+    "artifactName": "ply-visualizer-${version}-${os}-${arch}.${ext}",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**",
+      "web/**",
+      "build/icon.png",
+      "package.json",
+      "!**/node_modules/**"
+    ],
+    "asar": true,
+    "fileAssociations": [
+      {
+        "ext": [
+          "ply",
+          "pcd",
+          "xyz",
+          "pts",
+          "las",
+          "laz",
+          "e57",
+          "stl",
+          "obj",
+          "off",
+          "glb",
+          "gltf"
+        ],
+        "name": "3D point cloud / mesh",
+        "role": "Viewer"
+      }
+    ],
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "rpm",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "tar.gz",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "category": "Graphics",
+      "syncDesktopName": true,
+      "icon": "build/icons",
+      "mimeTypes": [
+        "application/x-ply",
+        "model/x-ply",
+        "model/stl",
+        "model/obj",
+        "model/gltf-binary",
+        "model/gltf+json"
+      ],
+      "maintainer": "deivse <deivse@users.noreply.github.com>",
+      "vendor": "deivse",
+      "synopsis": "Point cloud and mesh viewer with solo and groups",
+      "desktop": {
+        "entry": {
+          "Name": "PLY Visualizer",
+          "GenericName": "Point Cloud Viewer",
+          "Keywords": "plyviz;point cloud;pointcloud;mesh;3D;viewer;PLY;PCD;LAS;LAZ;E57;STL;OBJ;glTF;splat;",
+          "Actions": "NewWindow;"
+        },
+        "desktopActions": {
+          "NewWindow": {
+            "Name": "New Window",
+            "Exec": "\"/opt/PLY Visualizer/plyviz\""
+          }
+        }
+      },
+      "description": "View and compare point clouds and meshes"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png",
+      "artifactName": "ply-visualizer-${version}-windows-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "artifactName": "ply-visualizer-${version}-windows-${arch}-setup.${ext}"
+    },
+    "publish": null,
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.graphics-design",
+      "icon": "build/icon.png",
+      "identity": "-",
+      "hardenedRuntime": false,
+      "artifactName": "ply-visualizer-${version}-macos-${arch}.${ext}",
+      "executableName": "PLY Visualizer"
+    },
+    "deb": {
+      "artifactName": "ply-visualizer-${version}-linux-${arch}.${ext}"
+    },
+    "rpm": {
+      "artifactName": "ply-visualizer-${version}-linux-${arch}.${ext}"
+    },
+    "extraMetadata": {
+      "name": "ply-visualizer"
+    }
+  },
+  "devDependencies": {
+    "electron": "^45.2.3",
+    "electron-builder": "^26.18.0"
+  }
+}

@@ -56,3 +56,48 @@ export function hasRenderMode(
 ): boolean {
   return getRenderModeOptions(host, data).some(option => option.mode === mode);
 }
+
+export interface RenderModeStateHost {
+  spatialFiles: readonly SpatialData[];
+  splatMode?: {
+    canEnable(data: SpatialData | undefined): boolean;
+    isActive(fileIndex: number): boolean;
+  };
+  fileEntries: {
+    require(index: number): {
+      state: {
+        pointsVisible?: boolean;
+        solidVisible?: boolean;
+        wireframeVisible?: boolean;
+        normalsVisible?: boolean;
+      };
+    };
+  };
+}
+
+/** Whether a file's render-mode button shows as on. */
+export function isRenderModeActive(
+  host: RenderModeStateHost,
+  fileIndex: number,
+  mode: string
+): boolean {
+  const fileData = host.spatialFiles[fileIndex];
+  const supportsSplats = !!fileData && !!host.splatMode?.canEnable(fileData);
+  const fileSplatActive = supportsSplats && !!host.splatMode?.isActive(fileIndex);
+  const state = host.fileEntries.require(fileIndex).state;
+  switch (mode) {
+    case 'points':
+      return supportsSplats ? !fileSplatActive : (state.pointsVisible ?? true);
+    case 'splat':
+      return fileSplatActive;
+    case 'mesh':
+    case 'solid':
+      return state.solidVisible ?? true;
+    case 'wireframe':
+      return state.wireframeVisible ?? false;
+    case 'normals':
+      return state.normalsVisible ?? false;
+    default:
+      return false;
+  }
+}

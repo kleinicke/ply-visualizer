@@ -3,10 +3,16 @@
   import type { FileItemHost, FileRow } from './fileListTypes';
   import ModelAnimationPanel from './ModelAnimationPanel.svelte';
   import { filesState } from '../state/files.svelte';
+  import { soloState } from '../state/solo.svelte';
+  import { fileSelection, clickSelect, openRowMenu, fileBusy } from '../state/fileSelection.svelte';
   import { runWithFileActivity } from '../fileActivity';
   import { getPointCloudColorOptions } from '../colorOptions';
   import { ensureKeyboardModifierTracking, isShiftPressed } from '../keyboardModifiers';
-  import { getRenderModeOptions, hasRenderMode } from '../renderModeOptions';
+  import {
+    getRenderModeOptions,
+    hasRenderMode,
+    isRenderModeActive as isRenderModeActiveShared,
+  } from '../renderModeOptions';
   import CameraFrameList from './CameraFrameList.svelte';
   import E57CorrectionPanel from './E57CorrectionPanel.svelte';
   import DepthSettingsPanel from './DepthSettingsPanel.svelte';
@@ -44,7 +50,26 @@
       : null;
   });
 
-  const visible = $derived(row.entry.state.visible ?? true);
+  // While solo is active the checkbox is the entry's own setting ("mute");
+  // what is actually shown is decided by the solo set.
+  const soloActive = $derived(soloState.ids.length > 0);
+  const visible = $derived(
+    soloState.layered && row.entry.id in soloState.saved
+      ? soloState.saved[row.entry.id]
+      : (row.entry.state.visible ?? true),
+  );
+  const soloed = $derived(soloState.ids.includes(row.entry.id));
+  const hiddenBySolo = $derived(soloActive && !(row.entry.state.visible ?? true));
+  const canSolo = $derived(row.entry.parentId === null && !!host.solo);
+
+  function onSoloClick(e: MouseEvent) {
+    e.stopPropagation();
+    if (e.ctrlKey || e.metaKey || e.shiftKey) {
+      host.solo.toggleAdditive(row.entry.id);
+    } else {
+      host.solo.soloExclusive(row.entry.id);
+    }
+  }
   const collapsed = $derived(row.entry.state.collapsed ?? false);
   const colorMode = $derived(row.entry.state.colorMode ?? 'assigned');
 
@@ -129,11 +154,50 @@
       // Synchronize once the browser has completed the cancelled default
       // action; all other checkboxes update reactively through filesState.
       window.setTimeout(() => {
-        checkbox.checked = row.entry.state.visible ?? true;
+        checkbox.checked = visible;
       }, 0);
       return;
     }
     host.toggleFileVisibility(index);
+  }
+
+  const selected = $derived(fileSelection.ids.includes(row.entry.id));
+  // A long-running action (subsampling) is working on this entry: 0..1.
+  const busyProgress = $derived(fileBusy.byId[row.entry.id]);
+  const busy = $derived(busyProgress !== undefined);
+
+  // Controls inside a card keep their own clicks and context menus.
+  const INTERACTIVE =
+    'button, input, select, textarea, a, label, summary, [contenteditable], [role="slider"], [role="button"]:not(.file-name), [role="menuitem"]';
+
+  // Clicking the card (its name or any empty part) selects it for the file
+  // actions: Ctrl/Cmd toggles, Shift extends. Visibility is the checkbox.
+  function onCardClick(event: MouseEvent) {
+    if (busy) {
+      return;
+    }
+    const target = event.target as Element | null;
+    if (event.defaultPrevented || target?.closest(INTERACTIVE)) {
+      return;
+    }
+    // Leave text being selected (e.g. a file path) alone.
+    if (window.getSelection()?.toString()) {
+      return;
+    }
+    clickSelect(row.entry.id, { toggle: event.ctrlKey || event.metaKey, range: event.shiftKey });
+  }
+
+  function onContextMenu(event: MouseEvent) {
+    if (busy) {
+      event.preventDefault();
+      return;
+    }
+    const target = event.target as Element | null;
+    if (target?.closest('input, textarea, select, [contenteditable]')) {
+      return; // native menu (copy/paste) in text fields
+    }
+    event.preventDefault();
+    openRowMenu(row.entry.id, event.clientX, event.clientY);
   }
 
   function onRemove() {
@@ -214,26 +278,7 @@
   }
 
   function isRenderModeActiveFor(fileIndex: number, mode: string): boolean {
-    const fileData = host.spatialFiles[fileIndex];
-    const supportsSplats = !!fileData && !!host.splatMode?.canEnable(fileData);
-    const fileSplatActive = supportsSplats && !!host.splatMode?.isActive(fileIndex);
-    switch (mode) {
-      case 'points':
-        return supportsSplats
-          ? !fileSplatActive
-          : (host.fileEntries.require(fileIndex).state.pointsVisible ?? true);
-      case 'splat':
-        return fileSplatActive;
-      case 'mesh':
-      case 'solid':
-        return host.fileEntries.require(fileIndex).state.solidVisible ?? true;
-      case 'wireframe':
-        return host.fileEntries.require(fileIndex).state.wireframeVisible ?? false;
-      case 'normals':
-        return host.fileEntries.require(fileIndex).state.normalsVisible ?? false;
-      default:
-        return false;
-    }
+    return isRenderModeActiveShared(host, fileIndex, mode);
   }
 
   function formatSplatSize(value: number): string {
@@ -543,16 +588,33 @@
   );
 </script>
 
+<!-- Keyboard selection is on the focusable name (Enter/Space); the card adds a mouse target. -->
+<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
 <div
   class="file-item"
+  class:solo-hidden={hiddenBySolo}
+  class:selected
+  class:busy
+  aria-busy={busy}
+  role="group"
+  onclick={onCardClick}
+  oncontextmenu={onContextMenu}
   data-entry-id={row.entry.id}
   use:longPressFileReorder={{ host, entryId: row.entry.id }}
   style:touch-action={collapsed ? 'none' : undefined}
 >
+  {#if busy}
+    <div class="file-busy" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round((busyProgress ?? 0) * 100)}>
+      <span class="spinner spinner-inline"></span>
+      <span>Subsampling… {Math.round((busyProgress ?? 0) * 100)}%</span>
+      <span class="file-busy-bar"><span style="width: {(busyProgress ?? 0) * 100}%"></span></span>
+    </div>
+  {/if}
   <div
+    inert={busy}
     class="file-item-main"
     style="touch-action: none; user-select: none;"
-    title="Hold to reorder"
+    title="Click to select (Ctrl/Shift to add) · right-click for actions · hold to reorder"
   >
     <button
       class="collapse-toggle"
@@ -570,14 +632,37 @@
       id={`file-${index}`}
       checked={visible}
       onclick={onVisibilityClick}
+      title={soloActive ? 'Own visibility (applies when solo ends)' : 'Visible (Shift-click: solo)'}
     />
+    {#if canSolo}
+      <button
+        class="solo-toggle"
+        class:lit={soloed}
+        title="Solo (only show this). Ctrl/Shift-click: add to solo"
+        aria-pressed={soloed}
+        onclick={onSoloClick}>S</button
+      >
+    {/if}
     <span class="color-indicator" style={colorIndicatorStyle()}></span>
-    <label for={`file-${index}`} class="file-name" data-short-path={shortPath}>{name}</label>
+    <span
+      class="file-name"
+      role="button"
+      tabindex="0"
+      aria-pressed={selected}
+      data-short-path={shortPath}
+      onkeydown={(event: KeyboardEvent) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          event.stopPropagation();
+          clickSelect(row.entry.id, { toggle: event.ctrlKey || event.metaKey, range: event.shiftKey });
+        }
+      }}>{name}</span
+    >
     <button class="remove-file" data-file-index={index} title={removeTitle} onclick={onRemove}
       >✕</button
     >
   </div>
-  <div class="file-item-content" id={`file-content-${index}`} style="display: {collapsed ? 'none' : 'block'}">
+  <div inert={busy} class="file-item-content" id={`file-content-${index}`} style="display: {collapsed ? 'none' : 'block'}">
     {#if kind === 'pointcloud' && data}
       <div class="file-info">{data.vertexCount.toLocaleString()} vertices, {data.faceCount.toLocaleString()} faces{data.isGaussianSplat ? ' · 3DGS' : ''}</div>
 
