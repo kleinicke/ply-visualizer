@@ -25,8 +25,8 @@ runners and publishes a release with the installers and `SHA256SUMS.txt`. Bump
 matching tag:
 
 ```sh
-git tag desktop-v0.1.5
-git push fork desktop-v0.1.5
+git tag desktop-v0.1.6
+git push fork desktop-v0.1.6
 ```
 
 Builds are unsigned (macOS Gatekeeper and Windows SmartScreen warn on first

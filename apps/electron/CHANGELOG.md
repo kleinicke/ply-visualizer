@@ -3,6 +3,15 @@
 Changes to the desktop app. Each version's section becomes the notes of its
 GitHub release (`desktop-v<version>`), so keep the `## <version>` headings.
 
+## 0.1.6
+
+- The right-click menu of a file card has a **Render mode** submenu. It lists
+  the modes the files support (Points, Splats, Mesh, Wireframe, Normals) and
+  applies the chosen one to every file the menu is for: for example Select
+  all, right-click a card, Render mode → Splats switches every splat file at
+  once. A check shows a mode that is on for all of them, a dash one that is on
+  for some.
+
 ## 0.1.5
 
 - Opening a folder follows symbolic links to files and subfolders, which were
