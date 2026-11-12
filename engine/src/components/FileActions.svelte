@@ -4,6 +4,7 @@
   import type { FileEntry } from '../state/fileEntries';
   import { filesState } from '../state/files.svelte';
   import Modal from './Modal.svelte';
+  import { getRenderModeOptions, isRenderModeActive } from '../renderModeOptions';
   import {
     fileSelection,
     fileActionUi,
@@ -144,6 +145,58 @@
     };
   }
 
+  // ---- render mode submenu ----
+  // The modes of the menu's files, each doing what that mode's button on a
+  // card does, for every file that has it: like Shift-clicking the button,
+  // it turns the mode on for all of them unless all already have it on.
+  const MODE_ORDER = ['points', 'splat', 'mesh', 'wireframe', 'normals'];
+  type ModeItem = { mode: string; label: string; files: number[]; on: number };
+  const renderModes = $derived.by((): ModeItem[] => {
+    filesState.entries;
+    const modes = new Map<string, ModeItem>();
+    for (const entry of menuEntries) {
+      const data = entry.spatial?.data;
+      const index = host.fileEntries.indexOf(entry.id);
+      if (!data || index < 0 || entry.id in fileBusy.byId) continue;
+      for (const option of getRenderModeOptions(host, data)) {
+        let item = modes.get(option.mode);
+        if (!item) {
+          // The card labels without their icon.
+          item = { mode: option.mode, label: option.label.replace(/^\S+\s+/, ''), files: [], on: 0 };
+          modes.set(option.mode, item);
+        }
+        item.files.push(index);
+        if (isRenderModeActive(host, index, option.mode)) item.on++;
+      }
+    }
+    const rank = (mode: string) => (MODE_ORDER.indexOf(mode) + 1 || 99);
+    return [...modes.values()].sort((a, b) => rank(a.mode) - rank(b.mode));
+  });
+  let renderMenuOpen = $state(false);
+  $effect(() => {
+    if (!fileActionUi.menu) renderMenuOpen = false;
+  });
+
+  function applyRenderMode(item: ModeItem) {
+    fileActionUi.menu = null;
+    const target = item.on < item.files.length;
+    for (const index of item.files) {
+      if (isRenderModeActive(host, index, item.mode) !== target) {
+        host.toggleUniversalRenderMode(index, item.mode);
+      }
+    }
+    host.requestRender();
+  }
+
+  /** Opens the submenu to the left when there is no room on the right. */
+  function flyout(node: HTMLElement) {
+    const rect = node.getBoundingClientRect();
+    if (rect.right > window.innerWidth - 4) node.classList.add('left');
+    if (rect.bottom > window.innerHeight - 4) {
+      node.style.top = `${Math.round(window.innerHeight - 4 - rect.bottom) - 5}px`;
+    }
+  }
+
   const fmt = (n: number) => n.toLocaleString();
 </script>
 
@@ -217,6 +270,50 @@
         >{action.label}{#if n && n < menuEntries.length}<span class="fcm-n">{n}</span>{/if}</button
       >
     {/each}
+    {#if renderModes.length}
+      <div class="fcm-sep" role="separator"></div>
+      <div
+        class="fcm-sub"
+        role="none"
+        onpointerenter={() => (renderMenuOpen = true)}
+        onpointerleave={() => (renderMenuOpen = false)}
+      >
+        <button
+          role="menuitem"
+          aria-haspopup="menu"
+          aria-expanded={renderMenuOpen}
+          class:open={renderMenuOpen}
+          onclick={() => (renderMenuOpen = !renderMenuOpen)}
+          >Render mode<span class="fcm-arrow">▸</span></button
+        >
+        {#if renderMenuOpen}
+          <div class="fcm-flyout" role="menu" use:flyout>
+            {#each renderModes as item (item.mode)}
+              <button
+                role="menuitemcheckbox"
+                aria-checked={item.on === item.files.length
+                  ? 'true'
+                  : item.on
+                    ? 'mixed'
+                    : 'false'}
+                title={item.on && item.on < item.files.length
+                  ? `On for ${item.on} of ${item.files.length}`
+                  : ''}
+                onclick={() => applyRenderMode(item)}
+              >
+                <span class="fcm-check"
+                  >{item.on === item.files.length ? '✓' : item.on ? '–' : ''}</span
+                >
+                <span class="fcm-label">{item.label}</span>
+                {#if item.files.length < menuEntries.length}<span class="fcm-n"
+                    >{item.files.length}</span
+                  >{/if}
+              </button>
+            {/each}
+          </div>
+        {/if}
+      </div>
+    {/if}
     <div class="fcm-sep" role="separator"></div>
     <button role="menuitem" onclick={() => menuSelect(selectAllListed)}>Select all</button>
     {#if selected.length}
@@ -373,6 +470,42 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  :global(.file-context-menu .fcm-sub) {
+    position: relative;
+  }
+  :global(.file-context-menu .fcm-sub > button.open) {
+    background: var(--vscode-menu-selectionBackground, var(--vscode-list-hoverBackground, #094771));
+    color: var(--vscode-menu-selectionForeground, inherit);
+  }
+  :global(.file-context-menu .fcm-arrow) {
+    opacity: 0.7;
+  }
+  :global(.file-context-menu .fcm-flyout) {
+    position: absolute;
+    left: 100%;
+    top: -5px;
+    min-width: 140px;
+    padding: 4px 0;
+    background: var(--vscode-menu-background, var(--vscode-editor-background, #252526));
+    border: 1px solid var(--vscode-menu-border, var(--vscode-sideBar-border, #454545));
+    border-radius: 5px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+  }
+  :global(.file-context-menu .fcm-flyout.left) {
+    left: auto;
+    right: 100%;
+  }
+  :global(.file-context-menu .fcm-flyout button) {
+    justify-content: flex-start;
+  }
+  :global(.file-context-menu .fcm-check) {
+    width: 1em;
+    flex: none;
+    text-align: center;
+  }
+  :global(.file-context-menu .fcm-flyout .fcm-label) {
+    flex: 1;
   }
   :global(.file-context-menu .fcm-n) {
     opacity: 0.6;

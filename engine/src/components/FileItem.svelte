@@ -8,7 +8,11 @@
   import { runWithFileActivity } from '../fileActivity';
   import { getPointCloudColorOptions } from '../colorOptions';
   import { ensureKeyboardModifierTracking, isShiftPressed } from '../keyboardModifiers';
-  import { getRenderModeOptions, hasRenderMode } from '../renderModeOptions';
+  import {
+    getRenderModeOptions,
+    hasRenderMode,
+    isRenderModeActive as isRenderModeActiveShared,
+  } from '../renderModeOptions';
   import CameraFrameList from './CameraFrameList.svelte';
   import E57CorrectionPanel from './E57CorrectionPanel.svelte';
   import DepthSettingsPanel from './DepthSettingsPanel.svelte';
@@ -274,26 +278,7 @@
   }
 
   function isRenderModeActiveFor(fileIndex: number, mode: string): boolean {
-    const fileData = host.spatialFiles[fileIndex];
-    const supportsSplats = !!fileData && !!host.splatMode?.canEnable(fileData);
-    const fileSplatActive = supportsSplats && !!host.splatMode?.isActive(fileIndex);
-    switch (mode) {
-      case 'points':
-        return supportsSplats
-          ? !fileSplatActive
-          : (host.fileEntries.require(fileIndex).state.pointsVisible ?? true);
-      case 'splat':
-        return fileSplatActive;
-      case 'mesh':
-      case 'solid':
-        return host.fileEntries.require(fileIndex).state.solidVisible ?? true;
-      case 'wireframe':
-        return host.fileEntries.require(fileIndex).state.wireframeVisible ?? false;
-      case 'normals':
-        return host.fileEntries.require(fileIndex).state.normalsVisible ?? false;
-      default:
-        return false;
-    }
+    return isRenderModeActiveShared(host, fileIndex, mode);
   }
 
   function formatSplatSize(value: number): string {
