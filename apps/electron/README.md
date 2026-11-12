@@ -20,7 +20,9 @@ npm run dist:mac            # dmg + zip, x64 and arm64 (on macOS)
 
 `.github/workflows/desktop-release.yml` builds all three platforms on GitHub's
 runners and publishes a release with the installers and `SHA256SUMS.txt`. Bump
-`version` in `package.json`, then push a matching tag:
+`version` in `package.json`, add a `## <version>` section to
+[CHANGELOG.md](CHANGELOG.md) (the release fails without one), then push a
+matching tag:
 
 ```sh
 git tag desktop-v0.1.5
@@ -29,6 +31,11 @@ git push fork desktop-v0.1.5
 
 Builds are unsigned (macOS Gatekeeper and Windows SmartScreen warn on first
 launch; the release notes explain how to proceed).
+
+Release notes are that version's changelog section followed by
+[release-notes.md](release-notes.md). Editing either on `main` rewrites the
+notes of every published release (`desktop-release-notes.yml`), so fixing an old
+entry needs no manual edit on GitHub.
 
 ## Opening files
 

@@ -123,31 +123,18 @@ jobs:
         working-directory: dist
         run: sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
 
+      # The notes are this version's CHANGELOG.md section plus release-notes.md;
+      # desktop-release-notes.yml keeps them in sync when the changelog changes.
+      - uses: actions/checkout@v4
+        with:
+          path: src
+          sparse-checkout: apps/electron
+
+      - name: Release notes
+        run: node src/apps/electron/scripts/release-notes.mjs "${{ github.ref_name }}" > release-notes.md
+
       - uses: softprops/action-gh-release@v2
         with:
           name: PLY Visualizer Desktop ${{ github.ref_name }}
           files: dist/*
-          body: |
-            Standalone desktop build of the 3D point cloud and mesh viewer from
-            [kleinicke/ply-visualizer](https://github.com/kleinicke/ply-visualizer),
-            with DAW-style solo, a solo panel, regex groups and folder opening.
-            See the [README](https://github.com/${{ github.repository }}/tree/${{ github.ref_name }}#what-this-fork-adds).
-
-            | Platform | Download |
-            | --- | --- |
-            | Linux (x64) | `.AppImage` (run directly), `.deb` (Debian/Ubuntu), `.rpm` (Fedora/openSUSE) or `.tar.gz` |
-            | Windows (x64) | `-setup.exe` installer or portable `.zip` |
-            | macOS (Apple Silicon / Intel) | `.dmg` (`arm64` / `x64`) or `.zip` |
-
-            The builds are not signed with a paid developer certificate:
-            - **macOS**: the app is ad-hoc signed, so the first launch is blocked as
-              coming from an unidentified developer. Open it once, then allow it in
-              *System Settings → Privacy & Security → Open Anyway*. Or, after
-              moving it to Applications, clear the download quarantine in Terminal:
-              `xattr -dr com.apple.quarantine "/Applications/PLY Visualizer.app"`
-            - **Windows** SmartScreen may warn: choose *More info → Run anyway*.
-            - **Linux**: `chmod +x` the AppImage, then run it; or install the package
-              (`sudo apt install ./ply-visualizer-*.deb`, `sudo dnf install ./ply-visualizer-*.rpm`),
-              which adds `plyviz` to the PATH and a desktop entry.
-
-            `SHA256SUMS.txt` lists the checksums of all files.
+          body_path: release-notes.md
